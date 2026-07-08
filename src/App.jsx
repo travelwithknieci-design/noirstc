@@ -147,6 +147,7 @@ const emptyGuest = () => ({
   gender: "",
   travelStatus: "",
   ageRange: "",
+  guestStatus: "",
   nights: "",
   instagram: "",
   email: "",
@@ -228,6 +229,7 @@ export default function NoirBookingManifest() {
   const [commissionData, setCommissionData] = useState(null);
   const [commissionLoginForm, setCommissionLoginForm] = useState({ name: "", password: "" });
   const [commissionLoginError, setCommissionLoginError] = useState("");
+  const [commissionOpenAgent, setCommissionOpenAgent] = useState(null);
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [changePasswordForm, setChangePasswordForm] = useState({ currentPassword: "", newPassword: "" });
   const [changePasswordMessage, setChangePasswordMessage] = useState("");
@@ -619,6 +621,10 @@ export default function NoirBookingManifest() {
       Couple: active.filter((g) => g.travelStatus === "Couple").length,
       Single: active.filter((g) => g.travelStatus === "Single").length,
     };
+    const guestStatusCounts = {
+      New: active.filter((g) => g.guestStatus === "New").length,
+      Returning: active.filter((g) => g.guestStatus === "Returning").length,
+    };
     let couplesCount = 0;
     let singleMen = 0;
     let singleWomen = 0;
@@ -653,6 +659,10 @@ export default function NoirBookingManifest() {
       "18-29": active.filter((g) => g.ageRange === "18-29").map((g) => g.name),
       "30-49": active.filter((g) => g.ageRange === "30-49").map((g) => g.name),
       "50+": active.filter((g) => g.ageRange === "50+").map((g) => g.name),
+    };
+    const guestStatusNames = {
+      New: active.filter((g) => g.guestStatus === "New").map((g) => g.name),
+      Returning: active.filter((g) => g.guestStatus === "Returning").map((g) => g.name),
     };
     const celebrationMap = new Map();
     active.forEach((g) => {
@@ -736,9 +746,12 @@ export default function NoirBookingManifest() {
         }
       }
       const roomPrice = guestsInRoom.reduce((s, g) => s + (Number(g.price) || 0), 0);
-      if (roomPrice > 0) {
+      const stakeAgent = primaryAgent || "Free Agent";
+      const isPersonalRoom =
+        stakeAgent !== "Free Agent" &&
+        guestsInRoom.some((g) => g.name && g.name.trim().split(/\s+/)[0].toLowerCase() === stakeAgent.toLowerCase());
+      if (roomPrice > 0 && !isPersonalRoom) {
         totalPricedRooms += 1;
-        const stakeAgent = primaryAgent || "Free Agent";
         agentPricedRoomCounts[stakeAgent] = (agentPricedRoomCounts[stakeAgent] || 0) + 1;
       }
       const occKey = guestsInRoom.length === 1 ? "solo" : guestsInRoom.length === 2 ? "double" : null;
@@ -771,6 +784,7 @@ export default function NoirBookingManifest() {
       womenCount,
       ageCounts,
       travelStatusCounts,
+      guestStatusCounts,
       couplesCount,
       couplesNames,
       singleMen,
@@ -780,6 +794,7 @@ export default function NoirBookingManifest() {
       menNames,
       womenNames,
       ageNames,
+      guestStatusNames,
       celebrationMap,
       autoPayCount,
       autoPayNames,
@@ -1150,13 +1165,13 @@ export default function NoirBookingManifest() {
         }
         .noir-ratesrowbtn:hover { background: var(--panel2); }
         .noir-demotablehead {
-          display: grid; grid-template-columns: 1.4fr 1.4fr 1.6fr 2fr; gap: 8px;
+          display: grid; grid-template-columns: 1.2fr 1.1fr 1.3fr 1.6fr 1.3fr; gap: 8px;
           background: var(--panel2); color: var(--muted-inverse); font-size: 10.5px;
           text-transform: uppercase; letter-spacing: 0.05em; padding: 8px 14px;
           border: 1px solid var(--line); border-bottom: none; border-radius: 10px 10px 0 0;
         }
         .noir-demotablerow {
-          display: grid; grid-template-columns: 1.4fr 1.4fr 1.6fr 2fr; gap: 8px; align-items: center;
+          display: grid; grid-template-columns: 1.2fr 1.1fr 1.3fr 1.6fr 1.3fr; gap: 8px; align-items: center;
           padding: 8px 14px; border-bottom: 1px dashed var(--line);
         }
         .noir-demotablerow:last-child { border-bottom: none; }
@@ -1381,12 +1396,14 @@ export default function NoirBookingManifest() {
                   >
                     Commission
                   </button>
-                  <button
-                    className={"noir-subnavitem" + (activePage === "rates" ? " active" : "")}
-                    onClick={() => setActivePage("rates")}
-                  >
-                    Rates & Verification
-                  </button>
+                  {commissionAuth && commissionAuth.lead && (
+                    <button
+                      className={"noir-subnavitem" + (activePage === "rates" ? " active" : "")}
+                      onClick={() => setActivePage("rates")}
+                    >
+                      Rates & Verification
+                    </button>
+                  )}
                   <button
                     className={"noir-subnavitem" + (activePage === "vendors" ? " active" : "")}
                     onClick={() => setActivePage("vendors")}
@@ -1453,6 +1470,14 @@ export default function NoirBookingManifest() {
                     { name: "50+", value: stats.ageCounts["50+"], color: "#5c5648" },
                   ],
                   emptyNote: "No ages set yet.",
+                },
+                {
+                  label: "New vs returning",
+                  data: [
+                    { name: "New", value: stats.guestStatusCounts.New, color: "#f1ead9" },
+                    { name: "Returning", value: stats.guestStatusCounts.Returning, color: "#8a8172" },
+                  ],
+                  emptyNote: "No guests tagged new/returning yet.",
                 },
               ].map((donut) => {
                 const total = donut.data.reduce((s, d) => s + d.value, 0);
@@ -1538,6 +1563,17 @@ export default function NoirBookingManifest() {
               </button>
             </div>
 
+            <div className="noir-stats" style={{ gridTemplateColumns: "repeat(2, 1fr)", marginBottom: 16, maxWidth: 420 }}>
+              <button type="button" className={"noir-statcard noir-statcard-clickable" + (demoOpenKey === "new" ? " active" : "")} onClick={() => setDemoOpenKey(demoOpenKey === "new" ? null : "new")}>
+                <div className="noir-statlabel">New guests</div>
+                <div className="noir-statval">{stats.guestStatusCounts.New}</div>
+              </button>
+              <button type="button" className={"noir-statcard noir-statcard-clickable" + (demoOpenKey === "returning" ? " active" : "")} onClick={() => setDemoOpenKey(demoOpenKey === "returning" ? null : "returning")}>
+                <div className="noir-statlabel">Returning guests</div>
+                <div className="noir-statval">{stats.guestStatusCounts.Returning}</div>
+              </button>
+            </div>
+
             {demoOpenKey && !demoOpenKey.startsWith("celeb:") && (
               <div className="noir-agentblock">
                 <div className="noir-blocklabel">
@@ -1551,6 +1587,8 @@ export default function NoirBookingManifest() {
                       "age-18-29": "Age 18-29",
                       "age-30-49": "Age 30-49",
                       "age-50+": "Age 50+",
+                      new: "New guests",
+                      returning: "Returning guests",
                     }[demoOpenKey]
                   }
                 </div>
@@ -1565,6 +1603,8 @@ export default function NoirBookingManifest() {
                       "age-18-29": stats.ageNames["18-29"],
                       "age-30-49": stats.ageNames["30-49"],
                       "age-50+": stats.ageNames["50+"],
+                      new: stats.guestStatusNames.New,
+                      returning: stats.guestStatusNames.Returning,
                     }[demoOpenKey] || [];
                   return list.length === 0 ? (
                     <div className="noir-empty" style={{ padding: "10px 0" }}>No one here yet.</div>
@@ -1640,6 +1680,7 @@ export default function NoirBookingManifest() {
                   <span>Gender</span>
                   <span>Travel status</span>
                   <span>Age</span>
+                  <span>New/Returning</span>
                 </div>
                 <div className="noir-genderlist" style={{ borderRadius: "0 0 10px 10px", borderTop: "none" }}>
                   {roster
@@ -1690,6 +1731,22 @@ export default function NoirBookingManifest() {
                               {age}
                             </button>
                           ))}
+                        </div>
+                        <div className="noir-gendertoggle">
+                          <button
+                            type="button"
+                            className={g.guestStatus === "New" ? "active" : ""}
+                            onClick={() => saveRoster(roster.map((r) => (r.id === g.id ? { ...r, guestStatus: "New" } : r)))}
+                          >
+                            New
+                          </button>
+                          <button
+                            type="button"
+                            className={g.guestStatus === "Returning" ? "active" : ""}
+                            onClick={() => saveRoster(roster.map((r) => (r.id === g.id ? { ...r, guestStatus: "Returning" } : r)))}
+                          >
+                            Returning
+                          </button>
                         </div>
                       </div>
                     ))}
@@ -1958,14 +2015,18 @@ export default function NoirBookingManifest() {
                       </div>
                     </div>
 
-                    <div className="noir-blocklabel">Commission by agent</div>
+                    <div className="noir-blocklabel">Commission by agent · click a name to see it per booking</div>
                     <div className="noir-referrerlist">
                       {AGENTS.map((agent) => {
-                        const totals = commissionData.agentTotals[agent] || { commission: 0, tjkcDeduction: 0 };
+                        const totals = commissionData.agentTotals[agent] || { commission: 0, tjkcDeduction: 0, rooms: [] };
                         const net = totals.commission - totals.tjkcDeduction;
                         return (
                           <div key={agent} className="noir-referrerrow">
-                            <div className="noir-referrerbtn" style={{ cursor: "default" }}>
+                            <button
+                              type="button"
+                              className="noir-referrerbtn"
+                              onClick={() => setCommissionOpenAgent(commissionOpenAgent === agent ? null : agent)}
+                            >
                               <span>{agent}</span>
                               <span style={{ display: "flex", gap: 16, alignItems: "center" }}>
                                 <span className="noir-referrercount">Earned {money(totals.commission)}</span>
@@ -1978,7 +2039,40 @@ export default function NoirBookingManifest() {
                                   </>
                                 )}
                               </span>
-                            </div>
+                            </button>
+                            {commissionOpenAgent === agent && (
+                              <div className="noir-referredlist">
+                                {(totals.rooms || []).length === 0 ? (
+                                  <div className="noir-referreditem">No bookings with commission yet.</div>
+                                ) : (
+                                  totals.rooms.map((r, i) => (
+                                    <div key={i} className="noir-referreditem" style={{ display: "flex", justifyContent: "space-between" }}>
+                                      <span>{r.label}</span>
+                                      <span className="noir-money">{money(r.commission)}</span>
+                                    </div>
+                                  ))
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="noir-blocklabel" style={{ marginTop: 24 }}>Agent stake in the trip</div>
+                    <div className="noir-hint" style={{ marginBottom: 10 }}>
+                      Rooms booked by that agent, divided by all priced rooms in the trip — a room with no per-person
+                      rate doesn't count, and neither does an agent's own personal room (their own trip, not a sale).
+                    </div>
+                    <div className="noir-agentcards" style={{ marginBottom: 20 }}>
+                      {[...AGENTS, "Free Agent"].map((agent) => {
+                        const count = stats.agentPricedRoomCounts[agent] || 0;
+                        const pct = stats.totalPricedRooms > 0 ? Math.round((count / stats.totalPricedRooms) * 1000) / 10 : 0;
+                        return (
+                          <div key={agent} className="noir-agentcard" style={{ cursor: "default" }}>
+                            <div className="noir-statlabel">{agent}</div>
+                            <div className="noir-statval">{pct}%</div>
+                            <div className="noir-sub" style={{ marginTop: 4 }}>{count} of {stats.totalPricedRooms} priced rooms</div>
                           </div>
                         );
                       })}
@@ -2081,6 +2175,19 @@ export default function NoirBookingManifest() {
 
         {activePage === "rates" && (
           <div className="noir-demopage">
+            {!commissionAuth || !commissionAuth.lead ? (
+              <>
+                <div className="noir-blocklabel">This tab is lead-only</div>
+                <div className="noir-hint" style={{ marginBottom: 12 }}>
+                  Rates & Verification is restricted to Carnisa. Log in as lead from the Commission tab first —
+                  once you're logged in there, this tab will unlock automatically for the rest of your session.
+                </div>
+                <button type="button" className="noir-btn" onClick={() => setActivePage("commission")}>
+                  Go to Commission login
+                </button>
+              </>
+            ) : (
+              <>
             <div className="noir-blocklabel">Room rate by occupancy (5 nights) · Contract 1 vs Contract 2</div>
             <div className="noir-ratesgrid">
               <div className="noir-ratesheadrow">
@@ -2105,14 +2212,18 @@ export default function NoirBookingManifest() {
               })}
             </div>
 
-            <div className="noir-blocklabel" style={{ marginTop: 24 }}>Funjet net cost (5 nights) · Contract 1 vs Contract 2</div>
+            <div className="noir-blocklabel" style={{ marginTop: 24 }}>Funjet net cost (5 nights, per person) · Contract 1 vs Contract 2</div>
+            <div className="noir-hint" style={{ marginBottom: 10 }}>
+              Double occupancy numbers below are the per-person share — the total you gave me for a double room is
+              split in half here so it's comparable to the solo (per-person) figures.
+            </div>
             <div className="noir-ratesgrid">
               <div className="noir-ratesheadrow">
                 <div>Room type</div>
                 <div>C1 Solo</div>
                 <div>C2 Solo</div>
-                <div>C1 Double</div>
-                <div>C2 Double</div>
+                <div>C1 Double/pp</div>
+                <div>C2 Double/pp</div>
               </div>
               {ROOM_TYPE_ORDER.filter((t) => t !== "PLAT 2BDRM").map((roomType) => {
                 const f1solo = FUNJET_TABLES_BY_CONTRACT["1"]?.[5]?.solo?.[roomType];
@@ -2124,8 +2235,8 @@ export default function NoirBookingManifest() {
                     <div className="noir-ratesroomtype">{roomType}</div>
                     <div>{f1solo ? money(f1solo.net) : "—"}</div>
                     <div>{f2solo ? money(f2solo.net) : "—"}</div>
-                    <div>{f1double ? money(f1double.net) : "—"}</div>
-                    <div>{f2double ? money(f2double.net) : "—"}</div>
+                    <div>{f1double ? money(f1double.net / 2) : "—"}</div>
+                    <div>{f2double ? money(f2double.net / 2) : "—"}</div>
                   </div>
                 );
               })}
@@ -2161,6 +2272,8 @@ export default function NoirBookingManifest() {
               Contract 2 columns show "—" until those rates are loaded in — send them over the same way you did for
               Contract 1 and I'll fill this table in.
             </div>
+              </>
+            )}
           </div>
         )}
 
@@ -2859,6 +2972,19 @@ export default function NoirBookingManifest() {
                         <option value="18-29">18-29</option>
                         <option value="30-49">30-49</option>
                         <option value="50+">50+</option>
+                      </select>
+                    </div>
+                    <div className="noir-field">
+                      <label>New or returning</label>
+                      <select
+                        className="noir-select"
+                        style={{ width: "100%", borderRadius: 7 }}
+                        value={guestDraft.guestStatus}
+                        onChange={(e) => setGuestDraft({ ...guestDraft, guestStatus: e.target.value })}
+                      >
+                        <option value="">—</option>
+                        <option value="New">New</option>
+                        <option value="Returning">Returning</option>
                       </select>
                     </div>
                   </div>
