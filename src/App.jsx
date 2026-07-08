@@ -111,6 +111,13 @@ function getRoomPrimaryAgent(guestsInRoom) {
   return anyAgent ? anyAgent.agent : null;
 }
 
+// Room-level fields (commission, price rate, nights, room type, etc.) live on whichever
+// guest is marked Primary traveler for that room — falls back to the first guest for
+// older rooms where nobody's been marked primary yet.
+function getPrimaryGuest(guestsInRoom) {
+  return guestsInRoom.find((g) => g.primaryTraveler) || guestsInRoom[0];
+}
+
 const ADDONS = [
   { key: "catamaran", label: "Catamaran" },
   { key: "atvFarm", label: "ATV Farm" },
@@ -138,6 +145,18 @@ const emptyItineraryEvent = () => ({
   title: "",
   description: "",
   photo: "",
+});
+
+const emptySponsorship = () => ({
+  id: "sp_" + Math.random().toString(36).slice(2, 9),
+  businessName: "",
+  contactName: "",
+  contactInfo: "",
+  socials: "",
+  sponsorshipType: "",
+  usage: "",
+  expectedReturn: "",
+  status: "",
 });
 
 const emptyGuest = () => ({
@@ -244,6 +263,10 @@ export default function NoirBookingManifest() {
   const [showItineraryForm, setShowItineraryForm] = useState(false);
   const [itineraryDraft, setItineraryDraft] = useState(null);
   const [editingItineraryId, setEditingItineraryId] = useState(null);
+  const [sponsorships, setSponsorships] = useState(null);
+  const [showSponsorshipForm, setShowSponsorshipForm] = useState(false);
+  const [sponsorshipDraft, setSponsorshipDraft] = useState(null);
+  const [editingSponsorshipId, setEditingSponsorshipId] = useState(null);
 
   useEffect(() => {
     try {
@@ -492,11 +515,64 @@ export default function NoirBookingManifest() {
     reader.readAsDataURL(file);
   }
 
+  useEffect(() => {
+    if (!activeTripId) return;
+    (async () => {
+      let list = [];
+      try {
+        const val = await storageGet("sponsorships:" + activeTripId);
+        list = val ? JSON.parse(val) : [];
+      } catch {
+        list = [];
+      }
+      setSponsorships(list);
+    })();
+  }, [activeTripId]);
+
+  async function saveSponsorships(next) {
+    setSponsorships(next);
+    try {
+      await storageSet("sponsorships:" + activeTripId, JSON.stringify(next));
+    } catch {
+      // Read-only session — already showing the data above, it just won't persist.
+    }
+  }
+
+  function openAddSponsorship() {
+    setEditingSponsorshipId(null);
+    setSponsorshipDraft(emptySponsorship());
+    setShowSponsorshipForm(true);
+  }
+
+  function openEditSponsorship(s) {
+    setEditingSponsorshipId(s.id);
+    setSponsorshipDraft({ ...s });
+    setShowSponsorshipForm(true);
+  }
+
+  async function submitSponsorship(e) {
+    e.preventDefault();
+    if (!sponsorshipDraft.businessName.trim()) return;
+    let next;
+    if (editingSponsorshipId) {
+      next = sponsorships.map((s) => (s.id === editingSponsorshipId ? sponsorshipDraft : s));
+    } else {
+      next = [...(sponsorships || []), sponsorshipDraft];
+    }
+    await saveSponsorships(next);
+    setShowSponsorshipForm(false);
+  }
+
+  async function deleteSponsorship(s) {
+    const next = (sponsorships || []).filter((r) => r.id !== s.id);
+    await saveSponsorships(next);
+  }
+
   function syncRoomFinancials(list) {
     const groups = new Map();
     list.forEach((g) => {
       if (g.cancelled) return;
-      const key = (g.roomGroup && g.roomGroup.trim()) || "solo:" + g.id;
+      const key = (g.roomGroup && g.roomGroup.trim().toLowerCase()) || "solo:" + g.id;
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(g);
     });
@@ -507,11 +583,12 @@ export default function NoirBookingManifest() {
         0
       );
       const occupancyKey = guestsInRoom.length === 1 ? "solo" : guestsInRoom.length === 2 ? "double" : null;
-      const nights = guestsInRoom[0]?.nights;
-      const roomType = guestsInRoom[0]?.roomType;
+      const primaryGuest = getPrimaryGuest(guestsInRoom);
+      const nights = primaryGuest?.nights;
+      const roomType = primaryGuest?.roomType;
       const hasRate = guestsInRoom.some((g) => Number(g.price) > 0);
-      const funjet = hasRate && nights ? getFunjetRate(nights, occupancyKey, roomType, guestsInRoom[0]?.contract) : null;
-      const manualCommission = Number(guestsInRoom[0]?.commission) || 0;
+      const funjet = hasRate && nights ? getFunjetRate(nights, occupancyKey, roomType, primaryGuest?.contract) : null;
+      const manualCommission = Number(primaryGuest?.commission) || 0;
       const commission = funjet ? funjet.commission : manualCommission;
       const primaryAgent = getRoomPrimaryAgent(guestsInRoom);
       const insuredCost = guestsInRoom.reduce((s, g) => s + (g.insurance ? INSURANCE_COST : 0), 0);
@@ -526,7 +603,7 @@ export default function NoirBookingManifest() {
     });
     return list.map((g) => {
       if (g.cancelled) return g;
-      const key = (g.roomGroup && g.roomGroup.trim()) || "solo:" + g.id;
+      const key = (g.roomGroup && g.roomGroup.trim().toLowerCase()) || "solo:" + g.id;
       const info = roomInfo.get(key);
       if (!info) return g;
       let tjkcDeduction = g.tjkcDeduction;
@@ -606,7 +683,7 @@ export default function NoirBookingManifest() {
     const revenue = roomRevenue + insuranceRevenue;
     const roomMap = new Map();
     active.forEach((g) => {
-      const key = (g.roomGroup && g.roomGroup.trim()) || "solo:" + g.id;
+      const key = (g.roomGroup && g.roomGroup.trim().toLowerCase()) || "solo:" + g.id;
       if (!roomMap.has(key)) roomMap.set(key, []);
       roomMap.get(key).push(g);
     });
@@ -702,9 +779,9 @@ export default function NoirBookingManifest() {
     const beddingRoomNames = { "1 King": [], "2 Doubles": [] };
     const roomTypeCounts = {};
     roomMap.forEach((guestsInRoom) => {
-      const roomType = guestsInRoom[0]?.roomType || "Unspecified";
+      const roomType = getPrimaryGuest(guestsInRoom)?.roomType || "Unspecified";
       roomTypeCounts[roomType] = (roomTypeCounts[roomType] || 0) + 1;
-      const bedding = guestsInRoom[0]?.bedding;
+      const bedding = getPrimaryGuest(guestsInRoom)?.bedding;
       const roomLabel = guestsInRoom.map((g) => g.name).join(" & ");
       if (bedding === "1 King") {
         beddingCounts["1 King"] += 1;
@@ -719,7 +796,7 @@ export default function NoirBookingManifest() {
       const roomAgents = primary
         ? [primary.agent]
         : Array.from(new Set(guestsInRoom.map((g) => g.agent).filter(Boolean)));
-      const roomCommission = Number(guestsInRoom[0]?.commission) || 0;
+      const roomCommission = Number(getPrimaryGuest(guestsInRoom)?.commission) || 0;
       const primaryAgent = getRoomPrimaryAgent(guestsInRoom);
       let roomTjkcDeduction = 0;
       if (primaryAgent && typeof AGENT_SPLIT_RATES[primaryAgent] === "number") {
@@ -755,8 +832,9 @@ export default function NoirBookingManifest() {
         agentPricedRoomCounts[stakeAgent] = (agentPricedRoomCounts[stakeAgent] || 0) + 1;
       }
       const occKey = guestsInRoom.length === 1 ? "solo" : guestsInRoom.length === 2 ? "double" : null;
-      const roomNights = guestsInRoom[0]?.nights;
-      const funjetMatch = roomPrice > 0 && roomNights ? getFunjetRate(roomNights, occKey, guestsInRoom[0]?.roomType, guestsInRoom[0]?.contract) : null;
+      const primaryGuestForFunjet = getPrimaryGuest(guestsInRoom);
+      const roomNights = primaryGuestForFunjet?.nights;
+      const funjetMatch = roomPrice > 0 && roomNights ? getFunjetRate(roomNights, occKey, primaryGuestForFunjet?.roomType, primaryGuestForFunjet?.contract) : null;
       if (funjetMatch) {
         funjetActualCost += funjetMatch.net;
         funjetMatchedRooms += 1;
@@ -856,7 +934,7 @@ export default function NoirBookingManifest() {
     const map = new Map();
     const order = [];
     visibleRoster.forEach((g) => {
-      const key = (g.roomGroup && g.roomGroup.trim()) || "solo:" + g.id;
+      const key = (g.roomGroup && g.roomGroup.trim().toLowerCase()) || "solo:" + g.id;
       if (!map.has(key)) {
         map.set(key, []);
         order.push(key);
@@ -909,20 +987,24 @@ export default function NoirBookingManifest() {
   async function submitGuestAndAddRoommate(e) {
     e.preventDefault();
     if (!guestDraft.name.trim()) return;
+    let draft = guestDraft;
+    if (!draft.roomGroup || !draft.roomGroup.trim()) {
+      draft = { ...draft, roomGroup: draft.name.trim() };
+    }
     let next;
     if (editingId) {
-      next = roster.map((g) => (g.id === editingId ? guestDraft : g));
+      next = roster.map((g) => (g.id === editingId ? draft : g));
     } else {
-      next = [...roster, guestDraft];
+      next = [...roster, draft];
     }
     await saveRoster(next);
     const roommate = emptyGuest();
-    roommate.roomGroup = guestDraft.roomGroup;
-    roommate.roomType = guestDraft.roomType;
-    roommate.bedding = guestDraft.bedding;
-    roommate.arrivalDate = guestDraft.arrivalDate;
-    roommate.nights = guestDraft.nights;
-    roommate.agent = guestDraft.agent;
+    roommate.roomGroup = draft.roomGroup;
+    roommate.roomType = draft.roomType;
+    roommate.bedding = draft.bedding;
+    roommate.arrivalDate = draft.arrivalDate;
+    roommate.nights = draft.nights;
+    roommate.agent = draft.agent;
     setEditingId(null);
     setGuestDraft(roommate);
   }
@@ -1325,8 +1407,75 @@ export default function NoirBookingManifest() {
           font-family: 'IBM Plex Mono', monospace;
         }
         .noir-ratechip:hover { border-color: var(--accent-inverse); }
+        .noir-loginscreen {
+          width: 100%; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+          background: var(--bg);
+        }
+        .noir-loginbox {
+          width: 340px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+          padding: 32px 28px; text-align: center;
+        }
+        .noir-loginbox .noir-brand { color: var(--text-inverse); justify-content: center; }
+        .noir-loginbox .noir-brandsub { color: var(--muted-inverse); }
+        .noir-loginbox .noir-blocklabel { text-align: left; margin-bottom: 14px; }
+        .noir-loginbox .noir-field { text-align: left; }
+        .noir-loginbox form { margin-top: 4px; }
       `}</style>
 
+      {!commissionAuth ? (
+        <div className="noir-loginscreen">
+          <div className="noir-loginbox">
+            <div className="noir-brand">NO<span>IR</span></div>
+            <div className="noir-brandsub" style={{ marginBottom: 20 }}>Booking manifest</div>
+            <div className="noir-blocklabel" style={{ color: "var(--muted-inverse)" }}>Log in to continue</div>
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setCommissionLoginError("");
+                try {
+                  const res = await fetch("/.netlify/functions/auth", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ action: "login", ...commissionLoginForm }),
+                  });
+                  if (!res.ok) {
+                    setCommissionLoginError("Wrong name or password.");
+                    return;
+                  }
+                  const data = await res.json();
+                  sessionStorage.setItem("noir_commission_auth", JSON.stringify(data));
+                  setCommissionAuth(data);
+                  setCommissionLoginForm({ name: "", password: "" });
+                } catch {
+                  setCommissionLoginError("Couldn't reach the login server. Try again.");
+                }
+              }}
+            >
+              <div className="noir-field">
+                <label>Name</label>
+                <input
+                  type="text"
+                  autoFocus
+                  placeholder="Type your name"
+                  value={commissionLoginForm.name}
+                  onChange={(e) => setCommissionLoginForm({ ...commissionLoginForm, name: e.target.value })}
+                />
+              </div>
+              <div className="noir-field" style={{ marginTop: 10 }}>
+                <label>Password</label>
+                <input
+                  type="password"
+                  value={commissionLoginForm.password}
+                  onChange={(e) => setCommissionLoginForm({ ...commissionLoginForm, password: e.target.value })}
+                />
+              </div>
+              {commissionLoginError && <div className="noir-lockerror" style={{ marginTop: 8 }}>{commissionLoginError}</div>}
+              <button type="submit" className="noir-btn" style={{ marginTop: 14, width: "100%" }}>Log in</button>
+            </form>
+          </div>
+        </div>
+      ) : (
+        <>
       <div className="noir-sidebar">
         <div className="noir-brand">NO<span>IR</span></div>
         <div className="noir-brandsub">Booking manifest</div>
@@ -1415,6 +1564,12 @@ export default function NoirBookingManifest() {
                     onClick={() => setActivePage("itinerary")}
                   >
                     Itinerary
+                  </button>
+                  <button
+                    className={"noir-subnavitem" + (activePage === "sponsorship" ? " active" : "")}
+                    onClick={() => setActivePage("sponsorship")}
+                  >
+                    Sponsorship
                   </button>
                 </div>
               )}
@@ -1828,7 +1983,7 @@ export default function NoirBookingManifest() {
                   const roomMap = new Map();
                   const order = [];
                   matches.forEach((g) => {
-                    const key = (g.roomGroup && g.roomGroup.trim()) || "solo:" + g.id;
+                    const key = (g.roomGroup && g.roomGroup.trim().toLowerCase()) || "solo:" + g.id;
                     if (!roomMap.has(key)) {
                       roomMap.set(key, []);
                       order.push(key);
@@ -1862,62 +2017,7 @@ export default function NoirBookingManifest() {
 
         {activePage === "commission" && (
           <div className="noir-demopage">
-            {!commissionAuth ? (
-              <>
-                <div className="noir-blocklabel">Log in to view commission</div>
-                <div className="noir-hint" style={{ marginBottom: 12 }}>
-                  Commission splits are private between you and the agency. Log in with your name and password to
-                  see only what's meant for you.
-                </div>
-                <form
-                  onSubmit={async (e) => {
-                    e.preventDefault();
-                    setCommissionLoginError("");
-                    try {
-                      const res = await fetch("/.netlify/functions/auth", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify(commissionLoginForm),
-                      });
-                      if (!res.ok) {
-                        setCommissionLoginError("Wrong name or password.");
-                        return;
-                      }
-                      const data = await res.json();
-                      sessionStorage.setItem("noir_commission_auth", JSON.stringify(data));
-                      setCommissionAuth(data);
-                      setCommissionLoginForm({ name: "", password: "" });
-                    } catch {
-                      setCommissionLoginError("Couldn't reach the login server. Try again.");
-                    }
-                  }}
-                  style={{ maxWidth: 320 }}
-                >
-                  <div className="noir-field">
-                    <label>Name</label>
-                    <select
-                      className="noir-select"
-                      style={{ width: "100%", borderRadius: 7 }}
-                      value={commissionLoginForm.name}
-                      onChange={(e) => setCommissionLoginForm({ ...commissionLoginForm, name: e.target.value })}
-                    >
-                      <option value="">—</option>
-                      {AGENTS.map((a) => <option key={a} value={a}>{a}</option>)}
-                    </select>
-                  </div>
-                  <div className="noir-field" style={{ marginTop: 10 }}>
-                    <label>Password</label>
-                    <input
-                      type="password"
-                      value={commissionLoginForm.password}
-                      onChange={(e) => setCommissionLoginForm({ ...commissionLoginForm, password: e.target.value })}
-                    />
-                  </div>
-                  {commissionLoginError && <div className="noir-lockerror" style={{ marginTop: 8 }}>{commissionLoginError}</div>}
-                  <button type="submit" className="noir-btn" style={{ marginTop: 14 }}>Log in</button>
-                </form>
-              </>
-            ) : !commissionData ? (
+            {!commissionData ? (
               <div className="noir-empty">Loading your commission…</div>
             ) : (
               <>
@@ -2179,16 +2279,13 @@ export default function NoirBookingManifest() {
               <>
                 <div className="noir-blocklabel">This tab is lead-only</div>
                 <div className="noir-hint" style={{ marginBottom: 12 }}>
-                  Rates & Verification is restricted to Carnisa. Log in as lead from the Commission tab first —
-                  once you're logged in there, this tab will unlock automatically for the rest of your session.
+                  Rates & Verification is restricted to Carnisa. If you're seeing this, something's off — this tab
+                  shouldn't be reachable from your sidebar at all.
                 </div>
-                <button type="button" className="noir-btn" onClick={() => setActivePage("commission")}>
-                  Go to Commission login
-                </button>
               </>
             ) : (
               <>
-            <div className="noir-blocklabel">Room rate by occupancy (5 nights) · Contract 1 vs Contract 2</div>
+            <div className="noir-blocklabel">NOIR Rates Charged (5 nights) · Contract 1 vs Contract 2</div>
             <div className="noir-ratesgrid">
               <div className="noir-ratesheadrow">
                 <div>Room type</div>
@@ -2212,10 +2309,35 @@ export default function NoirBookingManifest() {
               })}
             </div>
 
-            <div className="noir-blocklabel" style={{ marginTop: 24 }}>Funjet net cost (5 nights, per person) · Contract 1 vs Contract 2</div>
+            <div className="noir-blocklabel" style={{ marginTop: 24 }}>Funjet net cost (5 nights, total per room) · Contract 1 vs Contract 2</div>
+            <div className="noir-ratesgrid">
+              <div className="noir-ratesheadrow">
+                <div>Room type</div>
+                <div>C1 Solo</div>
+                <div>C2 Solo</div>
+                <div>C1 Double</div>
+                <div>C2 Double</div>
+              </div>
+              {ROOM_TYPE_ORDER.filter((t) => t !== "PLAT 2BDRM").map((roomType) => {
+                const f1solo = FUNJET_TABLES_BY_CONTRACT["1"]?.[5]?.solo?.[roomType];
+                const f2solo = FUNJET_TABLES_BY_CONTRACT["2"]?.[5]?.solo?.[roomType];
+                const f1double = FUNJET_TABLES_BY_CONTRACT["1"]?.[5]?.double?.[roomType];
+                const f2double = FUNJET_TABLES_BY_CONTRACT["2"]?.[5]?.double?.[roomType];
+                return (
+                  <div className="noir-ratesrow" key={roomType}>
+                    <div className="noir-ratesroomtype">{roomType}</div>
+                    <div>{f1solo ? money(f1solo.net) : "—"}</div>
+                    <div>{f2solo ? money(f2solo.net) : "—"}</div>
+                    <div>{f1double ? money(f1double.net) : "—"}</div>
+                    <div>{f2double ? money(f2double.net) : "—"}</div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="noir-blocklabel" style={{ marginTop: 24 }}>Funjet gross (net + commission, per person) · Contract 1 vs Contract 2</div>
             <div className="noir-hint" style={{ marginBottom: 10 }}>
-              Double occupancy numbers below are the per-person share — the total you gave me for a double room is
-              split in half here so it's comparable to the solo (per-person) figures.
+              Double occupancy numbers below are the per-person share of the room's total gross cost.
             </div>
             <div className="noir-ratesgrid">
               <div className="noir-ratesheadrow">
@@ -2230,13 +2352,17 @@ export default function NoirBookingManifest() {
                 const f2solo = FUNJET_TABLES_BY_CONTRACT["2"]?.[5]?.solo?.[roomType];
                 const f1double = FUNJET_TABLES_BY_CONTRACT["1"]?.[5]?.double?.[roomType];
                 const f2double = FUNJET_TABLES_BY_CONTRACT["2"]?.[5]?.double?.[roomType];
+                const gross1solo = f1solo ? f1solo.net + f1solo.commission : null;
+                const gross2solo = f2solo ? f2solo.net + f2solo.commission : null;
+                const gross1double = f1double ? (f1double.net + f1double.commission) / 2 : null;
+                const gross2double = f2double ? (f2double.net + f2double.commission) / 2 : null;
                 return (
                   <div className="noir-ratesrow" key={roomType}>
                     <div className="noir-ratesroomtype">{roomType}</div>
-                    <div>{f1solo ? money(f1solo.net) : "—"}</div>
-                    <div>{f2solo ? money(f2solo.net) : "—"}</div>
-                    <div>{f1double ? money(f1double.net / 2) : "—"}</div>
-                    <div>{f2double ? money(f2double.net / 2) : "—"}</div>
+                    <div>{gross1solo !== null ? money(gross1solo) : "—"}</div>
+                    <div>{gross2solo !== null ? money(gross2solo) : "—"}</div>
+                    <div>{gross1double !== null ? money(gross1double) : "—"}</div>
+                    <div>{gross2double !== null ? money(gross2double) : "—"}</div>
                   </div>
                 );
               })}
@@ -2350,6 +2476,37 @@ export default function NoirBookingManifest() {
           </div>
         )}
 
+
+        {activePage === "sponsorship" && (
+          <div className="noir-demopage">
+            <div className="noir-header" style={{ marginBottom: 18 }}>
+              <div className="noir-blocklabel" style={{ marginBottom: 0 }}>Sponsorship</div>
+              <button className="noir-btn" onClick={openAddSponsorship}>+ Add sponsorship</button>
+            </div>
+            {!sponsorships || sponsorships.length === 0 ? (
+              <div className="noir-empty">No sponsorships added yet. Click "+ Add sponsorship" to add your first one.</div>
+            ) : (
+              <div className="noir-vendorgrid">
+                {sponsorships.map((s) => (
+                  <button type="button" key={s.id} className="noir-vendorcard" onClick={() => openEditSponsorship(s)}>
+                    <div className="noir-vendorname">{s.businessName}</div>
+                    {s.status && (
+                      <div className="noir-vendorcategory" style={{ background: s.status === "Confirmed" ? "var(--accent-inverse)" : "transparent", color: s.status === "Confirmed" ? "var(--panel)" : "var(--accent-inverse)" }}>
+                        {s.status}
+                      </div>
+                    )}
+                    {s.sponsorshipType && <div className="noir-vendordetail">Type: {s.sponsorshipType}</div>}
+                    {s.usage && <div className="noir-vendordetail">Used for: {s.usage}</div>}
+                    <div className="noir-vendordetail">{s.contactName}</div>
+                    <div className="noir-vendordetail">{s.contactInfo}</div>
+                    {s.socials && <div className="noir-vendordetail">{s.socials}</div>}
+                    {s.expectedReturn && <div className="noir-vendornotes">Expects: {s.expectedReturn}</div>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {activePage === "roster" && contractStats && (
               <>
@@ -2861,6 +3018,87 @@ export default function NoirBookingManifest() {
           </div>
         )}
 
+        {showSponsorshipForm && sponsorshipDraft && (
+          <div className="noir-overlay">
+            <div className="noir-modal" style={{ width: 460 }}>
+              <h3>{editingSponsorshipId ? "Edit sponsorship" : "Add sponsorship"}</h3>
+              <form onSubmit={submitSponsorship}>
+                {field("Business name", sponsorshipDraft.businessName, (v) => setSponsorshipDraft({ ...sponsorshipDraft, businessName: v }))}
+                <div className="noir-grid3">
+                  {field("Contact name", sponsorshipDraft.contactName, (v) => setSponsorshipDraft({ ...sponsorshipDraft, contactName: v }))}
+                  {field("Contact info (phone/email)", sponsorshipDraft.contactInfo, (v) => setSponsorshipDraft({ ...sponsorshipDraft, contactInfo: v }))}
+                  {field("Socials", sponsorshipDraft.socials, (v) => setSponsorshipDraft({ ...sponsorshipDraft, socials: v }))}
+                </div>
+                <div className="noir-grid3" style={{ marginTop: 10 }}>
+                  <div className="noir-field">
+                    <label>Sponsorship type</label>
+                    <select
+                      className="noir-select"
+                      style={{ width: "100%", borderRadius: 7 }}
+                      value={sponsorshipDraft.sponsorshipType}
+                      onChange={(e) => setSponsorshipDraft({ ...sponsorshipDraft, sponsorshipType: e.target.value })}
+                    >
+                      <option value="">—</option>
+                      <option value="Product">Product</option>
+                      <option value="Discount">Discount</option>
+                    </select>
+                  </div>
+                  <div className="noir-field">
+                    <label>How it'll be used</label>
+                    <select
+                      className="noir-select"
+                      style={{ width: "100%", borderRadius: 7 }}
+                      value={sponsorshipDraft.usage}
+                      onChange={(e) => setSponsorshipDraft({ ...sponsorshipDraft, usage: e.target.value })}
+                    >
+                      <option value="">—</option>
+                      <option value="Gift bags">Gift bags</option>
+                      <option value="Superlative Gifts">Superlative Gifts</option>
+                      <option value="Discount code for members">Discount code for members</option>
+                    </select>
+                  </div>
+                  <div className="noir-field">
+                    <label>Status</label>
+                    <select
+                      className="noir-select"
+                      style={{ width: "100%", borderRadius: 7 }}
+                      value={sponsorshipDraft.status}
+                      onChange={(e) => setSponsorshipDraft({ ...sponsorshipDraft, status: e.target.value })}
+                    >
+                      <option value="">—</option>
+                      <option value="Inquiry">Inquiry</option>
+                      <option value="Confirmed">Confirmed</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="noir-field">
+                  <label>What they expect in return</label>
+                  <textarea
+                    rows={3}
+                    value={sponsorshipDraft.expectedReturn}
+                    onChange={(e) => setSponsorshipDraft({ ...sponsorshipDraft, expectedReturn: e.target.value })}
+                    placeholder="Social tags, shoutouts, logo placement, etc."
+                  />
+                </div>
+                <div className="noir-modalactions">
+                  {editingSponsorshipId && (
+                    <button
+                      type="button"
+                      className="noir-btn ghost"
+                      style={{ marginRight: "auto" }}
+                      onClick={async () => { await deleteSponsorship(sponsorshipDraft); setShowSponsorshipForm(false); }}
+                    >
+                      Delete
+                    </button>
+                  )}
+                  <button type="button" className="noir-btn ghost" onClick={() => setShowSponsorshipForm(false)}>Close</button>
+                  <button type="submit" className="noir-btn">{editingSponsorshipId ? "Save changes" : "Add sponsorship"}</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
         {showItineraryForm && itineraryDraft && (
           <div className="noir-overlay">
             <div className="noir-modal" style={{ width: 460 }}>
@@ -3051,12 +3289,12 @@ export default function NoirBookingManifest() {
                   {(() => {
                     const rateTable = ROOM_RATES_BY_CONTRACT[guestDraft.contract || "1"][guestDraft.roomType];
                     if (!rateTable) return null;
-                    const groupKey = (guestDraft.roomGroup || "").trim();
+                    const groupKey = (guestDraft.roomGroup || "").trim().toLowerCase();
                     let occupancyCount = 1;
                     if (groupKey && roster) {
                       occupancyCount =
                         roster.filter(
-                          (g) => !g.cancelled && g.id !== guestDraft.id && (g.roomGroup || "").trim() === groupKey
+                          (g) => !g.cancelled && g.id !== guestDraft.id && (g.roomGroup || "").trim().toLowerCase() === groupKey
                         ).length + 1;
                     }
                     const occLabel = OCCUPANCY_LABELS[occupancyCount];
@@ -3129,18 +3367,38 @@ export default function NoirBookingManifest() {
                   </div>
                 </div>
 
+                {(() => {
+                  const groupKey = (guestDraft.roomGroup || "").trim().toLowerCase();
+                  const hasRoommate =
+                    !!groupKey &&
+                    roster.some(
+                      (g) => !g.cancelled && g.id !== guestDraft.id && (g.roomGroup || "").trim().toLowerCase() === groupKey
+                    );
+                  if (hasRoommate && !guestDraft.primaryTraveler) {
+                    return (
+                      <div className="noir-section">
+                        <div className="noir-sectiontitle">Commission</div>
+                        <div className="noir-hint">
+                          Commission, TJ balance, and the rest of the room's financials are set on this room's
+                          Primary traveler, not here — check "Primary traveler for this room" above on whichever
+                          profile should hold them.
+                        </div>
+                      </div>
+                    );
+                  }
+                  return (
                 <div className="noir-section">
                   <div className="noir-sectiontitle">Commission</div>
                   <div className="noir-grid4">
                     <div className="noir-field">
                       <label>Net balance</label>
                       <input type="text" readOnly value={money((() => {
-                        const groupKey = (guestDraft.roomGroup || "").trim();
+                        const groupKey = (guestDraft.roomGroup || "").trim().toLowerCase();
                         let occupancyCount = 1;
                         let roommates = [];
                         if (groupKey && roster) {
                           roommates = roster.filter(
-                            (g) => !g.cancelled && g.id !== guestDraft.id && (g.roomGroup || "").trim() === groupKey
+                            (g) => !g.cancelled && g.id !== guestDraft.id && (g.roomGroup || "").trim().toLowerCase() === groupKey
                           );
                           occupancyCount = roommates.length + 1;
                         }
@@ -3153,17 +3411,17 @@ export default function NoirBookingManifest() {
                     <div className="noir-field">
                       <label>Commission</label>
                       <input type="text" readOnly value={money((() => {
-                        const groupKey = (guestDraft.roomGroup || "").trim();
+                        const groupKey = (guestDraft.roomGroup || "").trim().toLowerCase();
                         let occupancyCount = 1;
                         if (groupKey && roster) {
                           occupancyCount =
                             roster.filter(
-                              (g) => !g.cancelled && g.id !== guestDraft.id && (g.roomGroup || "").trim() === groupKey
+                              (g) => !g.cancelled && g.id !== guestDraft.id && (g.roomGroup || "").trim().toLowerCase() === groupKey
                             ).length + 1;
                         }
                         const occKey = occupancyCount === 1 ? "solo" : occupancyCount === 2 ? "double" : null;
                         const roommatesForRate = groupKey && roster
-                          ? roster.filter((g) => !g.cancelled && g.id !== guestDraft.id && (g.roomGroup || "").trim() === groupKey)
+                          ? roster.filter((g) => !g.cancelled && g.id !== guestDraft.id && (g.roomGroup || "").trim().toLowerCase() === groupKey)
                           : [];
                         const roomHasRate = (Number(guestDraft.price) > 0) || roommatesForRate.some((g) => Number(g.price) > 0);
                         const funjet = roomHasRate && guestDraft.nights ? getFunjetRate(guestDraft.nights, occKey, guestDraft.roomType, guestDraft.contract) : null;
@@ -3176,12 +3434,12 @@ export default function NoirBookingManifest() {
                     <div className="noir-field">
                       <label>VAX balance</label>
                       <input type="text" readOnly value={money((() => {
-                        const groupKey = (guestDraft.roomGroup || "").trim();
+                        const groupKey = (guestDraft.roomGroup || "").trim().toLowerCase();
                         let occupancyCount = 1;
                         let roommates = [];
                         if (groupKey && roster) {
                           roommates = roster.filter(
-                            (g) => !g.cancelled && g.id !== guestDraft.id && (g.roomGroup || "").trim() === groupKey
+                            (g) => !g.cancelled && g.id !== guestDraft.id && (g.roomGroup || "").trim().toLowerCase() === groupKey
                           );
                           occupancyCount = roommates.length + 1;
                         }
@@ -3198,11 +3456,11 @@ export default function NoirBookingManifest() {
                     <div className="noir-field">
                       <label>TJ balance</label>
                       <input type="text" readOnly value={money((() => {
-                        const groupKey = (guestDraft.roomGroup || "").trim();
+                        const groupKey = (guestDraft.roomGroup || "").trim().toLowerCase();
                         const selfAmount = (Number(guestDraft.price) || 0) + (guestDraft.insurance ? INSURANCE_COST : 0);
                         if (!groupKey || !roster) return selfAmount;
                         const others = roster
-                          .filter((g) => !g.cancelled && g.id !== guestDraft.id && (g.roomGroup || "").trim() === groupKey)
+                          .filter((g) => !g.cancelled && g.id !== guestDraft.id && (g.roomGroup || "").trim().toLowerCase() === groupKey)
                           .reduce((s, g) => s + (Number(g.price) || 0) + (g.insurance ? INSURANCE_COST : 0), 0);
                         return others + selfAmount;
                       })())} style={{ opacity: 0.8 }} />
@@ -3217,12 +3475,12 @@ export default function NoirBookingManifest() {
                     <div className="noir-field">
                       <label>Difference (markup)</label>
                       <input type="text" readOnly value={money((() => {
-                        const groupKey = (guestDraft.roomGroup || "").trim();
+                        const groupKey = (guestDraft.roomGroup || "").trim().toLowerCase();
                         let roommates = [];
                         let occupancyCount = 1;
                         if (groupKey && roster) {
                           roommates = roster.filter(
-                            (g) => !g.cancelled && g.id !== guestDraft.id && (g.roomGroup || "").trim() === groupKey
+                            (g) => !g.cancelled && g.id !== guestDraft.id && (g.roomGroup || "").trim().toLowerCase() === groupKey
                           );
                           occupancyCount = roommates.length + 1;
                         }
@@ -3271,6 +3529,8 @@ export default function NoirBookingManifest() {
                     })()}
                   </div>
                 </div>
+                  );
+                })()}
 
                 <div className="noir-modalactions">
                   {editingId && (
@@ -3293,11 +3553,9 @@ export default function NoirBookingManifest() {
                     </>
                   )}
                   <button type="button" className="noir-btn ghost" onClick={() => setShowGuestForm(false)}>Close</button>
-                  {guestDraft.roomGroup && guestDraft.roomGroup.trim() && (
-                    <button type="button" className="noir-btn ghost" onClick={submitGuestAndAddRoommate}>
-                      Save & add roommate
-                    </button>
-                  )}
+                  <button type="button" className="noir-btn ghost" onClick={submitGuestAndAddRoommate}>
+                    Save & add roommate
+                  </button>
                   <button type="submit" className="noir-btn">{editingId ? "Save changes" : "Add guest"}</button>
                 </div>
               </form>
@@ -3305,6 +3563,8 @@ export default function NoirBookingManifest() {
           </div>
         )}
       </div>
+        </>
+      )}
     </div>
   );
 }
