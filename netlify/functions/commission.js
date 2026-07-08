@@ -10,6 +10,10 @@ function getRoomPrimaryAgent(guestsInRoom) {
   return any ? any.agent : null;
 }
 
+function getPrimaryGuest(guestsInRoom) {
+  return guestsInRoom.find((g) => g.primaryTraveler) || guestsInRoom[0];
+}
+
 function jsonResponse(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -39,9 +43,13 @@ export default async (req) => {
 
   const active = roster.filter((g) => !g.cancelled);
   const groups = new Map();
+  const order = [];
   active.forEach((g) => {
     const key = (g.roomGroup && g.roomGroup.trim()) || "solo:" + g.id;
-    if (!groups.has(key)) groups.set(key, []);
+    if (!groups.has(key)) {
+      groups.set(key, []);
+      order.push(key);
+    }
     groups.get(key).push(g);
   });
 
@@ -50,21 +58,37 @@ export default async (req) => {
   let markupPoolFromFreeAgents = 0;
   const agentTotals = {};
 
-  groups.forEach((guestsInRoom) => {
-    const roomCommission = guestsInRoom.reduce((s, g) => s + (Number(g.commission) || 0), 0);
+  order.forEach((key) => {
+    const guestsInRoom = groups.get(key);
+    // Commission is stored once per room (replicated onto each roommate for display
+    // purposes) — read it from a single guest, never sum across roommates, or a
+    // shared room silently doubles its commission.
+    const roomCommission = Number(getPrimaryGuest(guestsInRoom)?.commission) || 0;
     const primaryAgent = getRoomPrimaryAgent(guestsInRoom);
+    const label = guestsInRoom.map((g) => g.name).join(" & ");
     totalCommission += roomCommission;
+
     if (!primaryAgent) {
       markupPoolFromFreeAgents += roomCommission;
       return;
     }
-    if (!agentTotals[primaryAgent]) agentTotals[primaryAgent] = { commission: 0, tjkcDeduction: 0 };
-    agentTotals[primaryAgent].commission += roomCommission;
-    if (typeof AGENT_SPLIT_RATES[primaryAgent] === "number") {
-      const deduction = roomCommission * (1 - AGENT_SPLIT_RATES[primaryAgent]);
-      agentTotals[primaryAgent].tjkcDeduction += deduction;
-      tjkcTotal += deduction;
+
+    if (!agentTotals[primaryAgent]) {
+      agentTotals[primaryAgent] = { commission: 0, tjkcDeduction: 0, rooms: [] };
     }
+    let roomTjkc = 0;
+    if (typeof AGENT_SPLIT_RATES[primaryAgent] === "number") {
+      roomTjkc = roomCommission * (1 - AGENT_SPLIT_RATES[primaryAgent]);
+      tjkcTotal += roomTjkc;
+    }
+    agentTotals[primaryAgent].commission += roomCommission;
+    agentTotals[primaryAgent].tjkcDeduction += roomTjkc;
+    agentTotals[primaryAgent].rooms.push({
+      label,
+      commission: roomCommission,
+      tjkcDeduction: roomTjkc,
+      net: roomCommission - roomTjkc,
+    });
   });
 
   if (payload.lead) {
@@ -78,7 +102,7 @@ export default async (req) => {
     });
   }
 
-  const mine = agentTotals[payload.role] || { commission: 0, tjkcDeduction: 0 };
+  const mine = agentTotals[payload.role] || { commission: 0, tjkcDeduction: 0, rooms: [] };
   return jsonResponse({
     role: payload.role,
     lead: false,
@@ -88,6 +112,7 @@ export default async (req) => {
       tjkcDeduction: mine.tjkcDeduction,
       net: mine.commission - mine.tjkcDeduction,
       splitConfirmed: typeof AGENT_SPLIT_RATES[payload.role] === "number",
+      rooms: mine.rooms,
     },
   });
 };
