@@ -228,6 +228,11 @@ export default function NoirBookingManifest() {
   const [commissionData, setCommissionData] = useState(null);
   const [commissionLoginForm, setCommissionLoginForm] = useState({ name: "", password: "" });
   const [commissionLoginError, setCommissionLoginError] = useState("");
+  const [showChangePassword, setShowChangePassword] = useState(false);
+  const [changePasswordForm, setChangePasswordForm] = useState({ currentPassword: "", newPassword: "" });
+  const [changePasswordMessage, setChangePasswordMessage] = useState("");
+  const [resetPasswordTarget, setResetPasswordTarget] = useState("");
+  const [resetPasswordMessage, setResetPasswordMessage] = useState("");
   const [showSetDemographics, setShowSetDemographics] = useState(false);
   const [vendors, setVendors] = useState(null);
   const [showVendorForm, setShowVendorForm] = useState(false);
@@ -1859,18 +1864,82 @@ export default function NoirBookingManifest() {
               <div className="noir-empty">Loading your commission…</div>
             ) : (
               <>
-                <button
-                  type="button"
-                  className="noir-btn ghost"
-                  style={{ marginBottom: 18 }}
-                  onClick={() => {
-                    sessionStorage.removeItem("noir_commission_auth");
-                    setCommissionAuth(null);
-                    setCommissionData(null);
-                  }}
-                >
-                  Logged in as: {commissionAuth.role} · log out
-                </button>
+                <div style={{ display: "flex", gap: 8, marginBottom: 18, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    className="noir-btn ghost"
+                    onClick={() => {
+                      sessionStorage.removeItem("noir_commission_auth");
+                      setCommissionAuth(null);
+                      setCommissionData(null);
+                    }}
+                  >
+                    Logged in as: {commissionAuth.role} · log out
+                  </button>
+                  <button
+                    type="button"
+                    className="noir-btn ghost"
+                    onClick={() => {
+                      setShowChangePassword((v) => !v);
+                      setChangePasswordMessage("");
+                      setChangePasswordForm({ currentPassword: "", newPassword: "" });
+                    }}
+                  >
+                    {showChangePassword ? "Cancel" : "Change password"}
+                  </button>
+                </div>
+
+                {showChangePassword && (
+                  <form
+                    style={{ maxWidth: 320, marginBottom: 20 }}
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      setChangePasswordMessage("");
+                      try {
+                        const res = await fetch("/.netlify/functions/auth", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({
+                            action: "changePassword",
+                            name: commissionAuth.role,
+                            currentPassword: changePasswordForm.currentPassword,
+                            newPassword: changePasswordForm.newPassword,
+                          }),
+                        });
+                        const data = await res.json();
+                        if (!res.ok) {
+                          setChangePasswordMessage(data.error || "Couldn't change password.");
+                          return;
+                        }
+                        sessionStorage.setItem("noir_commission_auth", JSON.stringify(data));
+                        setCommissionAuth(data);
+                        setChangePasswordMessage("Password updated.");
+                        setChangePasswordForm({ currentPassword: "", newPassword: "" });
+                      } catch {
+                        setChangePasswordMessage("Couldn't reach the server. Try again.");
+                      }
+                    }}
+                  >
+                    <div className="noir-field">
+                      <label>Current password</label>
+                      <input
+                        type="password"
+                        value={changePasswordForm.currentPassword}
+                        onChange={(e) => setChangePasswordForm({ ...changePasswordForm, currentPassword: e.target.value })}
+                      />
+                    </div>
+                    <div className="noir-field" style={{ marginTop: 10 }}>
+                      <label>New password (6+ characters)</label>
+                      <input
+                        type="password"
+                        value={changePasswordForm.newPassword}
+                        onChange={(e) => setChangePasswordForm({ ...changePasswordForm, newPassword: e.target.value })}
+                      />
+                    </div>
+                    {changePasswordMessage && <div className="noir-hint" style={{ marginTop: 8 }}>{changePasswordMessage}</div>}
+                    <button type="submit" className="noir-btn" style={{ marginTop: 12 }}>Update password</button>
+                  </form>
+                )}
 
                 {commissionData.lead ? (
                   <>
@@ -1914,6 +1983,49 @@ export default function NoirBookingManifest() {
                         );
                       })}
                     </div>
+
+                    <div className="noir-blocklabel" style={{ marginTop: 24 }}>Reset an agent's password</div>
+                    <div className="noir-hint" style={{ marginBottom: 10 }}>
+                      This clears whatever password they've set and puts them back on the environment-variable
+                      default (AUTH_PASSWORD_&lt;NAME&gt; in Netlify) until they change it again.
+                    </div>
+                    <form
+                      style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}
+                      onSubmit={async (e) => {
+                        e.preventDefault();
+                        setResetPasswordMessage("");
+                        if (!resetPasswordTarget) return;
+                        try {
+                          const res = await fetch("/.netlify/functions/auth", {
+                            method: "POST",
+                            headers: {
+                              "Content-Type": "application/json",
+                              Authorization: `Bearer ${commissionAuth.token}`,
+                            },
+                            body: JSON.stringify({ action: "resetPassword", targetName: resetPasswordTarget }),
+                          });
+                          const data = await res.json();
+                          setResetPasswordMessage(res.ok ? `${resetPasswordTarget}'s password was reset.` : (data.error || "Couldn't reset password."));
+                        } catch {
+                          setResetPasswordMessage("Couldn't reach the server. Try again.");
+                        }
+                      }}
+                    >
+                      <div className="noir-field" style={{ marginBottom: 0 }}>
+                        <label>Agent</label>
+                        <select
+                          className="noir-select"
+                          style={{ borderRadius: 7 }}
+                          value={resetPasswordTarget}
+                          onChange={(e) => setResetPasswordTarget(e.target.value)}
+                        >
+                          <option value="">—</option>
+                          {AGENTS.filter((a) => a !== "Carnisa").map((a) => <option key={a} value={a}>{a}</option>)}
+                        </select>
+                      </div>
+                      <button type="submit" className="noir-btn ghost">Reset password</button>
+                    </form>
+                    {resetPasswordMessage && <div className="noir-hint" style={{ marginTop: 8 }}>{resetPasswordMessage}</div>}
                   </>
                 ) : (
                   <>
@@ -2493,50 +2605,6 @@ export default function NoirBookingManifest() {
               </div>
             )}
 
-            {contractStats && agentFilter !== "all" && contractStats.agentCommissionTotals[agentFilter] && (
-              <div className="noir-agentblock">
-                <div className="noir-blocklabel">{agentFilter}'s commission</div>
-                <div className="noir-stats noir-stats-secondary" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
-                  <div className="noir-statcard">
-                    <div className="noir-statlabel">Commission earned</div>
-                    <div className="noir-statval">{money(contractStats.agentCommissionTotals[agentFilter].commission)}</div>
-                  </div>
-                  {agentFilter === "Free Agent" ? (
-                    <div className="noir-statcard" style={{ gridColumn: "span 2" }}>
-                      <div className="noir-statlabel">Transfers to markup pool</div>
-                      <div className="noir-statval">{money(contractStats.markupPoolFromFreeAgents)}</div>
-                    </div>
-                  ) : agentFilter === "Adrienne" ? (
-                    <>
-                      <div className="noir-statcard">
-                        <div className="noir-statlabel">TJKC split</div>
-                        <div className="noir-statval" style={{ fontSize: 14 }}>Unconfirmed</div>
-                      </div>
-                      <div className="noir-statcard">
-                        <div className="noir-statlabel">Net commission</div>
-                        <div className="noir-statval" style={{ fontSize: 14 }}>TBD</div>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="noir-statcard">
-                        <div className="noir-statlabel">TJKC split</div>
-                        <div className="noir-statval">{money(contractStats.agentCommissionTotals[agentFilter].tjkcDeduction)}</div>
-                      </div>
-                      <div className="noir-statcard">
-                        <div className="noir-statlabel">Net commission</div>
-                        <div className="noir-statval">
-                          {money(
-                            contractStats.agentCommissionTotals[agentFilter].commission -
-                              contractStats.agentCommissionTotals[agentFilter].tjkcDeduction
-                          )}
-                        </div>
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-            )}
 
             <div className="noir-toolbar">
               <div className="noir-filters">
