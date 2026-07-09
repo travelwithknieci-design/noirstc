@@ -17,6 +17,87 @@ async function storageSet(key, value) {
   if (!res.ok) throw new Error("Storage write failed");
 }
 
+async function logActivity(token, messages) {
+  if (!token || !messages || messages.length === 0) return;
+  try {
+    await fetch("/.netlify/functions/activitylog", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ messages }),
+    });
+  } catch {
+    // Best-effort logging — never block the actual save over this.
+  }
+}
+
+function fmtLogVal(v) {
+  if (v === true) return "yes";
+  if (v === false || v === undefined || v === null || v === "") return "(blank)";
+  return String(v);
+}
+
+const GUEST_TRACKED_FIELDS = [
+  ["name", "Name"], ["gender", "Gender"], ["travelStatus", "Travel status"], ["ageRange", "Age range"],
+  ["guestStatus", "New/Returning"], ["nights", "Nights"], ["instagram", "Instagram"], ["email", "Email"],
+  ["phone", "Phone"], ["arrivalDate", "Arrival date"], ["arrivalTime", "Arrival time"],
+  ["airline", "Airline"], ["flightNumber", "Flight number"], ["roomType", "Room type"], ["bedding", "Bedding"],
+  ["dateBooked", "Date booked"], ["bookingNumber", "Booking number"], ["autoPay", "Auto pay"],
+  ["celebration", "Celebration"], ["dateOfCeleb", "Date of celebration"], ["referredBy", "Referred by"],
+  ["agent", "Agent"], ["insurance", "Insurance"], ["itinerarySent", "Itinerary sent"], ["registered", "Registered"],
+  ["primaryTraveler", "Primary traveler"], ["catamaran", "Catamaran"], ["atvFarm", "ATV Farm"],
+  ["sevenMile", "7 Mile"], ["clubMobay", "Club Mobay"], ["price", "Price"], ["roomGroup", "Room group"],
+  ["contract", "Contract"], ["commission", "Commission"], ["cancelled", "Cancelled"],
+];
+
+function diffGuestRoster(oldList, newList) {
+  const messages = [];
+  const oldById = new Map((oldList || []).map((g) => [g.id, g]));
+  const newById = new Map((newList || []).map((g) => [g.id, g]));
+  newById.forEach((g, id) => {
+    if (!oldById.has(id)) {
+      messages.push(`added guest "${g.name || "unnamed"}"`);
+      return;
+    }
+    const old = oldById.get(id);
+    GUEST_TRACKED_FIELDS.forEach(([field, label]) => {
+      const oldV = old[field];
+      const newV = g[field];
+      if (String(oldV ?? "") !== String(newV ?? "")) {
+        messages.push(`changed ${g.name || "a guest"}'s ${label} from ${fmtLogVal(oldV)} to ${fmtLogVal(newV)}`);
+      }
+    });
+  });
+  oldById.forEach((g, id) => {
+    if (!newById.has(id)) messages.push(`removed guest "${g.name || "unnamed"}"`);
+  });
+  return messages;
+}
+
+function diffNamedList(oldList, newList, typeLabel, fields) {
+  const messages = [];
+  const oldById = new Map((oldList || []).map((x) => [x.id, x]));
+  const newById = new Map((newList || []).map((x) => [x.id, x]));
+  const nameOf = (x) => x.name || x.businessName || x.title || "unnamed";
+  newById.forEach((item, id) => {
+    if (!oldById.has(id)) {
+      messages.push(`added ${typeLabel} "${nameOf(item)}"`);
+      return;
+    }
+    const old = oldById.get(id);
+    fields.forEach(([field, label]) => {
+      const oldV = old[field];
+      const newV = item[field];
+      if (String(oldV ?? "") !== String(newV ?? "") && field !== "photo") {
+        messages.push(`changed ${typeLabel} "${nameOf(item)}"'s ${label} from ${fmtLogVal(oldV)} to ${fmtLogVal(newV)}`);
+      }
+    });
+  });
+  oldById.forEach((item, id) => {
+    if (!newById.has(id)) messages.push(`removed ${typeLabel} "${nameOf(item)}"`);
+  });
+  return messages;
+}
+
 const FONT_IMPORT = `@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');`;
 
 const SEED_NEGRIL_GUESTS = [{"name": "Carnisa Allen*", "itinerarySent": false, "email": "travelwithknieci@gmail.com", "phone": "858-736-5148", "arrivalDate": "2027-07-14", "instagram": "@knieci.aye", "roomType": "DLX", "bedding": "1 King", "dateBooked": null, "bookingNumber": null, "autoPay": false, "celebration": "Anniversary", "dateOfCeleb": "2023-07-06", "referredBy": "Carnisa", "agent": "Carnisa", "insurance": false, "catamaran": false, "atvFarm": false, "sevenMile": false, "clubMobay": false, "netBalance": null, "commission": 0.0, "vaxBalance": 0, "tjBalance": null, "difference": 0, "tjkcDeduction": null, "netCommission": null, "registered": null, "id": "g_ieqh524", "cancelled": false, "price": "", "roomGroup": "Carnisa & Ethan", "primaryTraveler": false, "nights": "5", "contract": "1"}, {"name": "Ethan Allen", "itinerarySent": false, "email": "etall1914@gmail.com", "phone": "858-736-5094", "arrivalDate": "2027-07-14", "instagram": "@tooeazy4", "roomType": "DLX", "bedding": "1 King", "dateBooked": null, "bookingNumber": null, "autoPay": false, "celebration": "Birthday", "dateOfCeleb": "2023-08-02", "referredBy": "Carnisa", "agent": "Carnisa", "insurance": false, "catamaran": false, "atvFarm": false, "sevenMile": false, "clubMobay": false, "netBalance": null, "commission": null, "vaxBalance": null, "tjBalance": null, "difference": null, "tjkcDeduction": null, "netCommission": null, "registered": null, "id": "g_yng5by1", "cancelled": false, "price": "", "roomGroup": "Carnisa & Ethan", "primaryTraveler": false, "nights": "5", "contract": "1"}, {"name": "Asia Joyner", "itinerarySent": false, "email": "travelisajoy@gmail.com", "phone": "571-241-9488", "arrivalDate": "2027-07-14", "instagram": "@ayeejoyy", "roomType": "DLX Swim", "bedding": "1 King", "dateBooked": null, "bookingNumber": null, "autoPay": false, "celebration": "Birthday", "dateOfCeleb": "2023-08-16", "referredBy": "Asia", "agent": "Asia", "insurance": false, "catamaran": false, "atvFarm": false, "sevenMile": false, "clubMobay": false, "netBalance": null, "commission": 0.0, "vaxBalance": 0, "tjBalance": null, "difference": 0, "tjkcDeduction": null, "netCommission": null, "registered": null, "id": "g_a2rogub", "cancelled": false, "price": "", "roomGroup": "Asia & RJ", "primaryTraveler": false, "nights": "5", "contract": "1"}, {"name": "RJ Keith ", "itinerarySent": false, "email": "rjkeith10@gmail.com", "phone": null, "arrivalDate": "2027-07-14", "instagram": "  @_h3llboy", "roomType": "DLX Swim", "bedding": "1 King", "dateBooked": null, "bookingNumber": null, "autoPay": false, "celebration": null, "dateOfCeleb": null, "referredBy": "Asia", "agent": "Asia", "insurance": false, "catamaran": false, "atvFarm": false, "sevenMile": false, "clubMobay": false, "netBalance": null, "commission": null, "vaxBalance": null, "tjBalance": null, "difference": null, "tjkcDeduction": null, "netCommission": null, "registered": null, "id": "g_bb8ayn1", "cancelled": false, "price": "", "roomGroup": "Asia & RJ", "primaryTraveler": false, "nights": "5", "contract": "1"}, {"name": "LaQuanda Graham Johnson", "itinerarySent": false, "email": "q4getaways@outlook.com", "phone": "301-221-6631", "arrivalDate": "2027-07-14", "instagram": "@q4getaways", "roomType": "DLX", "bedding": "1 King", "dateBooked": null, "bookingNumber": null, "autoPay": false, "celebration": null, "dateOfCeleb": null, "referredBy": "LaQuanda", "agent": "LaQuanda", "insurance": false, "catamaran": false, "atvFarm": false, "sevenMile": false, "clubMobay": false, "netBalance": null, "commission": 0.0, "vaxBalance": 0, "tjBalance": 0, "difference": 0, "tjkcDeduction": null, "netCommission": null, "registered": null, "id": "g_b7o259o", "cancelled": false, "price": "", "roomGroup": "LaQuanda & Dale", "primaryTraveler": false, "nights": "5", "contract": "1"}, {"name": "Dale Johnson", "itinerarySent": false, "email": "djjohnson2086@yahoo.com", "phone": "301-613-0681", "arrivalDate": "2027-07-14", "instagram": "@thee_andre_price", "roomType": "DLX", "bedding": "1 King", "dateBooked": null, "bookingNumber": null, "autoPay": false, "celebration": "Birthday", "dateOfCeleb": "2023-08-20", "referredBy": "LaQuanda", "agent": "LaQuanda", "insurance": false, "catamaran": false, "atvFarm": false, "sevenMile": false, "clubMobay": false, "netBalance": null, "commission": null, "vaxBalance": null, "tjBalance": null, "difference": null, "tjkcDeduction": null, "netCommission": null, "registered": null, "id": "g_woo3sb0", "cancelled": false, "price": "", "roomGroup": "LaQuanda & Dale", "primaryTraveler": false, "nights": "5", "contract": "1"}, {"name": "Garett Bethea", "itinerarySent": false, "email": null, "phone": null, "arrivalDate": "2027-07-14", "instagram": null, "roomType": "DLX", "bedding": "1 King", "dateBooked": "2026-06-30", "bookingNumber": null, "autoPay": false, "celebration": null, "dateOfCeleb": null, "referredBy": null, "agent": null, "insurance": false, "catamaran": null, "atvFarm": null, "sevenMile": null, "clubMobay": null, "netBalance": null, "commission": null, "vaxBalance": null, "tjBalance": null, "difference": null, "tjkcDeduction": null, "netCommission": null, "registered": null, "id": "g_16mts56", "cancelled": false, "price": "", "roomGroup": "", "primaryTraveler": false, "nights": "5", "contract": "1"}, {"name": "Jon Merriweather", "itinerarySent": false, "email": null, "phone": null, "arrivalDate": "2027-07-14", "instagram": null, "roomType": "PLS", "bedding": "1 King", "dateBooked": "2026-07-01", "bookingNumber": null, "autoPay": true, "celebration": "Birthday", "dateOfCeleb": "2026-06-30", "referredBy": "Ethan", "agent": "Carnisa", "insurance": true, "catamaran": null, "atvFarm": null, "sevenMile": null, "clubMobay": null, "netBalance": null, "commission": null, "vaxBalance": null, "tjBalance": null, "difference": null, "tjkcDeduction": null, "netCommission": null, "registered": null, "id": "g_zc4pz0l", "cancelled": false, "price": "", "roomGroup": "", "primaryTraveler": false, "nights": "5", "contract": "1"}, {"name": "LaMysha Brown", "itinerarySent": false, "email": null, "phone": null, "arrivalDate": "2027-07-14", "instagram": null, "roomType": "DLX Swim", "bedding": "1 King", "dateBooked": "2026-07-01", "bookingNumber": null, "autoPay": true, "celebration": null, "dateOfCeleb": null, "referredBy": "Carnisa", "agent": "Carnisa", "insurance": true, "catamaran": null, "atvFarm": null, "sevenMile": null, "clubMobay": null, "netBalance": null, "commission": null, "vaxBalance": null, "tjBalance": null, "difference": null, "tjkcDeduction": null, "netCommission": null, "registered": null, "id": "g_x9xf26g", "cancelled": false, "price": "", "roomGroup": "", "primaryTraveler": false, "nights": "5", "contract": "1"}, {"name": "Apryl Young", "itinerarySent": false, "email": null, "phone": null, "arrivalDate": "2027-07-14", "instagram": null, "roomType": "DLX", "bedding": "1 King", "dateBooked": "2026-07-01", "bookingNumber": null, "autoPay": false, "celebration": "Birthday", "dateOfCeleb": "2026-06-10", "referredBy": "Dale", "agent": "LaQuanda", "insurance": false, "catamaran": null, "atvFarm": null, "sevenMile": null, "clubMobay": null, "netBalance": null, "commission": null, "vaxBalance": null, "tjBalance": null, "difference": null, "tjkcDeduction": null, "netCommission": null, "registered": null, "id": "g_k7zx5b4", "cancelled": false, "price": "", "roomGroup": "Apryl & Erik", "primaryTraveler": false, "nights": "5", "contract": "1"}, {"name": "Erik Young", "itinerarySent": false, "email": null, "phone": null, "arrivalDate": "2027-07-14", "instagram": null, "roomType": "DLX", "bedding": "1 King", "dateBooked": "2026-07-01", "bookingNumber": null, "autoPay": false, "celebration": null, "dateOfCeleb": null, "referredBy": "Dale", "agent": "LaQuanda", "insurance": false, "catamaran": null, "atvFarm": null, "sevenMile": null, "clubMobay": null, "netBalance": null, "commission": null, "vaxBalance": null, "tjBalance": null, "difference": null, "tjkcDeduction": null, "netCommission": null, "registered": null, "id": "g_ctzkk6o", "cancelled": false, "price": "", "roomGroup": "Apryl & Erik", "primaryTraveler": false, "nights": "5", "contract": "1"}, {"name": "Ashanti Young-Joiner", "itinerarySent": false, "email": null, "phone": null, "arrivalDate": "2027-07-14", "instagram": null, "roomType": "DLX", "bedding": "2 Doubles", "dateBooked": "2026-07-01", "bookingNumber": null, "autoPay": false, "celebration": null, "dateOfCeleb": null, "referredBy": null, "agent": "LaQuanda", "insurance": false, "catamaran": null, "atvFarm": null, "sevenMile": null, "clubMobay": null, "netBalance": null, "commission": null, "vaxBalance": null, "tjBalance": null, "difference": null, "tjkcDeduction": null, "netCommission": null, "registered": null, "id": "g_am89oz6", "cancelled": false, "price": "", "roomGroup": "Ashanti & Tracy", "primaryTraveler": false, "nights": "5", "contract": "1"}, {"name": "Tracy Young", "itinerarySent": false, "email": null, "phone": null, "arrivalDate": "2027-07-14", "instagram": null, "roomType": "DLX", "bedding": "2 Doubles", "dateBooked": "2026-07-01", "bookingNumber": null, "autoPay": false, "celebration": null, "dateOfCeleb": null, "referredBy": null, "agent": "LaQuanda", "insurance": false, "catamaran": null, "atvFarm": null, "sevenMile": null, "clubMobay": null, "netBalance": null, "commission": null, "vaxBalance": null, "tjBalance": null, "difference": null, "tjkcDeduction": null, "netCommission": null, "registered": null, "id": "g_ww3r9ay", "cancelled": false, "price": "", "roomGroup": "Ashanti & Tracy", "primaryTraveler": false, "nights": "5", "contract": "1"}, {"name": "Sharonda Gammons", "itinerarySent": false, "email": null, "phone": null, "arrivalDate": "2027-07-14", "instagram": null, "roomType": "PLAT", "bedding": "1 King", "dateBooked": "2026-07-01", "bookingNumber": null, "autoPay": false, "celebration": null, "dateOfCeleb": null, "referredBy": null, "agent": "Asia", "insurance": false, "catamaran": null, "atvFarm": null, "sevenMile": null, "clubMobay": null, "netBalance": null, "commission": null, "vaxBalance": null, "tjBalance": null, "difference": null, "tjkcDeduction": null, "netCommission": null, "registered": null, "id": "g_6i79n1d", "cancelled": false, "price": "", "roomGroup": "Sharonda & Damon", "primaryTraveler": false, "nights": "5", "contract": "1"}, {"name": "Damon Rush", "itinerarySent": null, "email": null, "phone": null, "arrivalDate": "2027-07-14", "instagram": null, "roomType": "PLAT", "bedding": "1 King", "dateBooked": "2026-07-01", "bookingNumber": null, "autoPay": false, "celebration": null, "dateOfCeleb": null, "referredBy": null, "agent": "Asia", "insurance": false, "catamaran": null, "atvFarm": null, "sevenMile": null, "clubMobay": null, "netBalance": null, "commission": null, "vaxBalance": null, "tjBalance": null, "difference": null, "tjkcDeduction": null, "netCommission": null, "registered": null, "id": "g_4x9m605", "cancelled": false, "price": "", "roomGroup": "Sharonda & Damon", "primaryTraveler": false, "nights": "5", "contract": "1"}, {"name": "Tamara Hamilton", "itinerarySent": false, "email": null, "phone": null, "arrivalDate": "2027-07-14", "instagram": null, "roomType": "PLAT", "bedding": "1 King", "dateBooked": "2026-07-01", "bookingNumber": null, "autoPay": false, "celebration": null, "dateOfCeleb": null, "referredBy": null, "agent": "Asia", "insurance": false, "catamaran": null, "atvFarm": null, "sevenMile": null, "clubMobay": null, "netBalance": null, "commission": null, "vaxBalance": null, "tjBalance": null, "difference": null, "tjkcDeduction": null, "netCommission": null, "registered": null, "id": "g_w0wa88v", "cancelled": false, "price": "", "roomGroup": "", "primaryTraveler": false, "nights": "5", "contract": "1"}, {"name": "Demitrious Brown", "itinerarySent": false, "email": null, "phone": null, "arrivalDate": "2027-07-14", "instagram": null, "roomType": "PLAT", "bedding": "1 King", "dateBooked": "2026-07-01", "bookingNumber": null, "autoPay": false, "celebration": null, "dateOfCeleb": null, "referredBy": "Ethan", "agent": "Carnisa", "insurance": false, "catamaran": null, "atvFarm": null, "sevenMile": null, "clubMobay": null, "netBalance": null, "commission": null, "vaxBalance": null, "tjBalance": null, "difference": null, "tjkcDeduction": null, "netCommission": null, "registered": null, "id": "g_3bol9lf", "cancelled": false, "price": "", "roomGroup": "Demitrious & LaKeisha", "primaryTraveler": false, "nights": "5", "contract": "1"}, {"name": "Lakeisha Brown", "itinerarySent": false, "email": null, "phone": null, "arrivalDate": "2027-07-14", "instagram": null, "roomType": "PLAT", "bedding": "1 King", "dateBooked": "2026-07-01", "bookingNumber": null, "autoPay": false, "celebration": null, "dateOfCeleb": null, "referredBy": "Ethan", "agent": "Carnisa", "insurance": false, "catamaran": null, "atvFarm": null, "sevenMile": null, "clubMobay": null, "netBalance": null, "commission": null, "vaxBalance": null, "tjBalance": null, "difference": null, "tjkcDeduction": null, "netCommission": null, "registered": null, "id": "g_9qcefb2", "cancelled": false, "price": "", "roomGroup": "Demitrious & LaKeisha", "primaryTraveler": false, "nights": "5", "contract": "1"}, {"name": "Marquis Byrd", "itinerarySent": false, "email": null, "phone": null, "arrivalDate": "2027-07-14", "instagram": null, "roomType": "DLX", "bedding": "1 King", "dateBooked": "2026-07-02", "bookingNumber": null, "autoPay": false, "celebration": null, "dateOfCeleb": null, "referredBy": "Ethan", "agent": "Carnisa", "insurance": true, "catamaran": null, "atvFarm": null, "sevenMile": null, "clubMobay": null, "netBalance": null, "commission": null, "vaxBalance": null, "tjBalance": null, "difference": null, "tjkcDeduction": null, "netCommission": null, "registered": null, "id": "g_arprhlw", "cancelled": false, "price": "", "roomGroup": "", "primaryTraveler": false, "nights": "5", "contract": "1"}, {"name": "Brittany Young", "itinerarySent": false, "email": null, "phone": null, "arrivalDate": "2027-07-14", "instagram": null, "roomType": "DLX", "bedding": "1 King", "dateBooked": "2026-07-02", "bookingNumber": null, "autoPay": true, "celebration": null, "dateOfCeleb": null, "referredBy": null, "agent": "Carnisa", "insurance": false, "catamaran": null, "atvFarm": null, "sevenMile": null, "clubMobay": null, "netBalance": null, "commission": null, "vaxBalance": null, "tjBalance": null, "difference": null, "tjkcDeduction": null, "netCommission": null, "registered": null, "id": "g_sekkq7k", "cancelled": false, "price": "", "roomGroup": "Brittany & Marcus", "primaryTraveler": true, "nights": "5", "contract": "1"}, {"name": "Marcus Young", "itinerarySent": false, "email": null, "phone": null, "arrivalDate": "2027-07-14", "instagram": null, "roomType": "DLX", "bedding": "1 King", "dateBooked": "2026-07-02", "bookingNumber": null, "autoPay": true, "celebration": "Birthday", "dateOfCeleb": "2026-06-21", "referredBy": "Carnisa", "agent": "Carnisa", "insurance": false, "catamaran": null, "atvFarm": null, "sevenMile": null, "clubMobay": null, "netBalance": null, "commission": null, "vaxBalance": null, "tjBalance": null, "difference": null, "tjkcDeduction": null, "netCommission": null, "registered": null, "id": "g_rs3u54h", "cancelled": false, "price": "", "roomGroup": "Brittany & Marcus", "primaryTraveler": false, "nights": "5", "contract": "1"}, {"name": "Anthony Richards", "itinerarySent": false, "email": null, "phone": null, "arrivalDate": "2027-07-13", "instagram": null, "roomType": "PLS Swim", "bedding": "1 King", "dateBooked": "2026-07-02", "bookingNumber": null, "autoPay": false, "celebration": "Anniversary", "dateOfCeleb": "2026-06-21", "referredBy": "Carnisa", "agent": "Carnisa", "insurance": true, "catamaran": null, "atvFarm": null, "sevenMile": null, "clubMobay": null, "netBalance": null, "commission": null, "vaxBalance": null, "tjBalance": null, "difference": null, "tjkcDeduction": null, "netCommission": null, "registered": null, "id": "g_btyv0mq", "cancelled": false, "price": "", "roomGroup": "Anthony & Valerie", "primaryTraveler": false, "nights": "5", "contract": "1"}, {"name": "Valerie Richards", "itinerarySent": false, "email": null, "phone": null, "arrivalDate": "2027-07-13", "instagram": null, "roomType": "PLS Swim", "bedding": "1 King", "dateBooked": "2026-07-02", "bookingNumber": null, "autoPay": false, "celebration": "Anniversary", "dateOfCeleb": null, "referredBy": "Carnisa", "agent": "Carnisa", "insurance": true, "catamaran": null, "atvFarm": null, "sevenMile": null, "clubMobay": null, "netBalance": null, "commission": null, "vaxBalance": null, "tjBalance": null, "difference": null, "tjkcDeduction": null, "netCommission": null, "registered": null, "id": "g_gq6n1bo", "cancelled": false, "price": "", "roomGroup": "Anthony & Valerie", "primaryTraveler": false, "nights": "5", "contract": "1"}, {"name": "Brittany Dixon", "itinerarySent": false, "email": null, "phone": null, "arrivalDate": "2027-07-14", "instagram": null, "roomType": "DLX", "bedding": "1 King", "dateBooked": "2026-07-02", "bookingNumber": null, "autoPay": true, "celebration": null, "dateOfCeleb": null, "referredBy": "Brittany/Marcus", "agent": "Carnisa", "insurance": null, "catamaran": null, "atvFarm": null, "sevenMile": null, "clubMobay": null, "netBalance": null, "commission": null, "vaxBalance": null, "tjBalance": null, "difference": null, "tjkcDeduction": null, "netCommission": null, "registered": null, "id": "g_bzjck26", "cancelled": false, "price": "", "roomGroup": "", "primaryTraveler": false, "nights": "5", "contract": "1"}, {"name": "Quatease Tann", "itinerarySent": null, "email": null, "phone": null, "arrivalDate": "2027-07-14", "instagram": null, "roomType": "PLS Swim", "bedding": "1 King", "dateBooked": "2026-07-03", "bookingNumber": null, "autoPay": null, "celebration": null, "dateOfCeleb": null, "referredBy": "Jasmine", "agent": "Asia", "insurance": null, "catamaran": null, "atvFarm": null, "sevenMile": null, "clubMobay": null, "netBalance": null, "commission": null, "vaxBalance": null, "tjBalance": null, "difference": null, "tjkcDeduction": null, "netCommission": null, "registered": null, "id": "g_18o72o7", "cancelled": false, "price": "", "roomGroup": "", "primaryTraveler": false, "nights": "5", "contract": "1"}, {"name": "Jasmine Whitaker", "itinerarySent": null, "email": null, "phone": null, "arrivalDate": "2027-07-14", "instagram": null, "roomType": "PLS Swim", "bedding": "1 King", "dateBooked": "2026-07-03", "bookingNumber": null, "autoPay": null, "celebration": "Birthday", "dateOfCeleb": null, "referredBy": "Asia", "agent": "Asia", "insurance": null, "catamaran": null, "atvFarm": null, "sevenMile": null, "clubMobay": null, "netBalance": null, "commission": null, "vaxBalance": null, "tjBalance": null, "difference": null, "tjkcDeduction": null, "netCommission": null, "registered": null, "id": "g_bzu1dti", "cancelled": false, "price": "", "roomGroup": "", "primaryTraveler": false, "nights": "5", "contract": "1"}, {"name": "Anita Sykes", "itinerarySent": false, "email": null, "phone": null, "arrivalDate": "2027-07-14", "instagram": null, "roomType": "DLX Swim", "bedding": "1 King", "dateBooked": "2026-07-04", "bookingNumber": null, "autoPay": null, "celebration": null, "dateOfCeleb": null, "referredBy": "Erik/Apryl", "agent": "LaQuanda", "insurance": null, "catamaran": null, "atvFarm": null, "sevenMile": null, "clubMobay": null, "netBalance": null, "commission": null, "vaxBalance": null, "tjBalance": null, "difference": null, "tjkcDeduction": null, "netCommission": null, "registered": null, "id": "g_ndteett", "cancelled": false, "price": "", "roomGroup": "Anita & John", "primaryTraveler": false, "nights": "5", "contract": "1"}, {"name": "John Sykes", "itinerarySent": false, "email": null, "phone": null, "arrivalDate": "2027-07-14", "instagram": null, "roomType": "DLX Swim", "bedding": "1 King", "dateBooked": "2026-07-04", "bookingNumber": null, "autoPay": null, "celebration": null, "dateOfCeleb": null, "referredBy": "Erik/Apryl", "agent": "LaQuanda", "insurance": true, "catamaran": null, "atvFarm": null, "sevenMile": null, "clubMobay": null, "netBalance": null, "commission": null, "vaxBalance": null, "tjBalance": null, "difference": null, "tjkcDeduction": null, "netCommission": null, "registered": null, "id": "g_k0qia9c", "cancelled": false, "price": "", "roomGroup": "Anita & John", "primaryTraveler": false, "nights": "5", "contract": "1"}, {"name": "Ebony McMurray", "itinerarySent": false, "email": null, "phone": null, "arrivalDate": "2027-07-14", "instagram": null, "roomType": "DLX", "bedding": "1 King", "dateBooked": "2026-07-05", "bookingNumber": null, "autoPay": null, "celebration": null, "dateOfCeleb": null, "referredBy": "Jade", "agent": "LaQuanda", "insurance": false, "catamaran": null, "atvFarm": null, "sevenMile": null, "clubMobay": null, "netBalance": null, "commission": null, "vaxBalance": null, "tjBalance": null, "difference": null, "tjkcDeduction": null, "netCommission": null, "registered": null, "id": "g_n3k6cym", "cancelled": false, "price": "", "roomGroup": "", "primaryTraveler": false, "nights": "5", "contract": "1"}, {"name": "LaToya Kennedy", "itinerarySent": null, "email": null, "phone": null, "arrivalDate": "2027-07-14", "instagram": null, "roomType": "DLX", "bedding": "2 Doubles", "dateBooked": "2026-07-05", "bookingNumber": null, "autoPay": null, "celebration": "Graduation", "dateOfCeleb": null, "referredBy": "Carnisa", "agent": "Carnisa", "insurance": false, "catamaran": null, "atvFarm": null, "sevenMile": null, "clubMobay": null, "netBalance": null, "commission": null, "vaxBalance": null, "tjBalance": null, "difference": null, "tjkcDeduction": null, "netCommission": null, "registered": null, "id": "g_wgn1m5g", "cancelled": false, "price": "", "roomGroup": "", "primaryTraveler": false, "nights": "5", "contract": "1"}, {"name": "William Jackson Jr", "itinerarySent": false, "email": null, "phone": null, "arrivalDate": "2027-07-14", "instagram": null, "roomType": "PLAT", "bedding": "1 King", "dateBooked": "2026-07-05", "bookingNumber": null, "autoPay": null, "celebration": null, "dateOfCeleb": null, "referredBy": "LaQuanda", "agent": "LaQuanda", "insurance": null, "catamaran": null, "atvFarm": null, "sevenMile": null, "clubMobay": null, "netBalance": null, "commission": null, "vaxBalance": null, "tjBalance": null, "difference": null, "tjkcDeduction": null, "netCommission": null, "registered": null, "id": "g_ys65buz", "cancelled": false, "price": "", "roomGroup": "William & Juran", "primaryTraveler": false, "nights": "5", "contract": "1"}, {"name": "Juran Johnson", "itinerarySent": false, "email": null, "phone": null, "arrivalDate": "2027-07-14", "instagram": null, "roomType": "PLAT", "bedding": "1 King", "dateBooked": "2026-07-05", "bookingNumber": null, "autoPay": null, "celebration": null, "dateOfCeleb": null, "referredBy": "LaQuanda", "agent": "LaQuanda", "insurance": null, "catamaran": null, "atvFarm": null, "sevenMile": null, "clubMobay": null, "netBalance": null, "commission": null, "vaxBalance": null, "tjBalance": null, "difference": null, "tjkcDeduction": null, "netCommission": null, "registered": null, "id": "g_sbkmuiv", "cancelled": false, "price": "", "roomGroup": "William & Juran", "primaryTraveler": false, "nights": "5", "contract": "1"}, {"name": "Jade Williams", "itinerarySent": false, "email": null, "phone": null, "arrivalDate": "2027-07-14", "instagram": null, "roomType": "PLAT 2BDRM", "bedding": null, "dateBooked": null, "bookingNumber": null, "autoPay": false, "celebration": null, "dateOfCeleb": null, "referredBy": "Carnisa", "agent": "Carnisa", "insurance": false, "catamaran": null, "atvFarm": null, "sevenMile": null, "clubMobay": null, "netBalance": null, "commission": null, "vaxBalance": null, "tjBalance": null, "difference": null, "tjkcDeduction": null, "netCommission": null, "registered": null, "id": "g_1nrgy9w", "cancelled": false, "price": "", "roomGroup": "Jade & Kiera", "primaryTraveler": false, "nights": "5", "contract": "1"}, {"name": "Kiera Smith", "itinerarySent": false, "email": null, "phone": null, "arrivalDate": "2027-07-14", "instagram": null, "roomType": "PLAT 2BDRM", "bedding": null, "dateBooked": null, "bookingNumber": null, "autoPay": false, "celebration": "Birthday", "dateOfCeleb": "2026-07-06", "referredBy": "Carnisa", "agent": "Carnisa", "insurance": false, "catamaran": null, "atvFarm": null, "sevenMile": null, "clubMobay": null, "netBalance": null, "commission": null, "vaxBalance": null, "tjBalance": null, "difference": null, "tjkcDeduction": null, "netCommission": null, "registered": null, "id": "g_858pecf", "cancelled": false, "price": "", "roomGroup": "Jade & Kiera", "primaryTraveler": false, "nights": "5", "contract": "1"}];
@@ -147,6 +228,20 @@ const emptyItineraryEvent = () => ({
   photo: "",
 });
 
+const DEFAULT_TAB_ORDER = ["roster", "demographics", "flights", "inventory", "commission", "rates", "activitylog", "vendors", "itinerary", "sponsorship"];
+const DEFAULT_TAB_LABELS = {
+  roster: "Roster",
+  demographics: "Demographics",
+  flights: "Flights",
+  inventory: "Inventory",
+  commission: "Commission",
+  rates: "Rates & Verification",
+  activitylog: "Activity Log",
+  vendors: "Vendors",
+  itinerary: "Itinerary",
+  sponsorship: "Sponsorship",
+};
+
 const emptySponsorship = () => ({
   id: "sp_" + Math.random().toString(36).slice(2, 9),
   businessName: "",
@@ -157,6 +252,7 @@ const emptySponsorship = () => ({
   usage: "",
   expectedReturn: "",
   status: "",
+  photos: [],
 });
 
 const emptyGuest = () => ({
@@ -172,6 +268,9 @@ const emptyGuest = () => ({
   email: "",
   phone: "",
   arrivalDate: "",
+  arrivalTime: "",
+  airline: "",
+  flightNumber: "",
   roomType: "",
   bedding: "",
   dateBooked: "",
@@ -244,6 +343,9 @@ export default function NoirBookingManifest() {
   const [demoOpenKey, setDemoOpenKey] = useState(null);
   const [showGuestsByAgent, setShowGuestsByAgent] = useState(false);
   const [inventoryOpenRoomType, setInventoryOpenRoomType] = useState(null);
+  const [inventoryConfig, setInventoryConfig] = useState(null);
+  const [editingInventory, setEditingInventory] = useState(false);
+  const [inventoryDraft, setInventoryDraft] = useState(null);
   const [commissionAuth, setCommissionAuth] = useState(null);
   const [commissionData, setCommissionData] = useState(null);
   const [commissionLoginForm, setCommissionLoginForm] = useState({ name: "", password: "" });
@@ -254,6 +356,15 @@ export default function NoirBookingManifest() {
   const [changePasswordMessage, setChangePasswordMessage] = useState("");
   const [resetPasswordTarget, setResetPasswordTarget] = useState("");
   const [resetPasswordMessage, setResetPasswordMessage] = useState("");
+  const [activityLogEntries, setActivityLogEntries] = useState(null);
+  const [flightsOpenDate, setFlightsOpenDate] = useState(null);
+  const [flightsOpenFlight, setFlightsOpenFlight] = useState(null);
+  const [showFlightForm, setShowFlightForm] = useState(false);
+  const [flightDraft, setFlightDraft] = useState(null);
+  const [editingFlightGuestIds, setEditingFlightGuestIds] = useState(null);
+  const [flightGuestFilter, setFlightGuestFilter] = useState("");
+  const [tabConfig, setTabConfig] = useState({ order: DEFAULT_TAB_ORDER, labels: DEFAULT_TAB_LABELS });
+  const [customizingTabs, setCustomizingTabs] = useState(false);
   const [showSetDemographics, setShowSetDemographics] = useState(false);
   const [vendors, setVendors] = useState(null);
   const [showVendorForm, setShowVendorForm] = useState(false);
@@ -297,6 +408,25 @@ export default function NoirBookingManifest() {
       }
     })();
   }, [commissionAuth, activeTripId, roster]);
+
+  useEffect(() => {
+    if (!commissionAuth || !commissionAuth.lead || !activeTripId || activePage !== "activitylog") return;
+    (async () => {
+      try {
+        const res = await fetch(`/.netlify/functions/activitylog?tripId=${encodeURIComponent(activeTripId)}`, {
+          headers: { Authorization: `Bearer ${commissionAuth.token}` },
+        });
+        if (!res.ok) {
+          setActivityLogEntries([]);
+          return;
+        }
+        const data = await res.json();
+        setActivityLogEntries(data.entries || []);
+      } catch {
+        setActivityLogEntries([]);
+      }
+    })();
+  }, [commissionAuth, activeTripId, activePage]);
 
   useEffect(() => {
     (async () => {
@@ -414,9 +544,14 @@ export default function NoirBookingManifest() {
   }, [activeTripId]);
 
   async function saveVendors(next) {
+    const changeMessages = diffNamedList(vendors, next, "vendor", [
+      ["name", "Name"], ["category", "Category"], ["contact", "Contact person"], ["phone", "Phone"],
+      ["email", "Email"], ["address", "Address"], ["website", "Website"], ["paymentTerms", "Payment terms"], ["notes", "Notes"],
+    ]);
     setVendors(next);
     try {
       await storageSet("vendors:" + activeTripId, JSON.stringify(next));
+      logActivity(commissionAuth?.token, changeMessages);
     } catch {
       // Read-only session — already showing the data above, it just won't persist.
     }
@@ -467,9 +602,13 @@ export default function NoirBookingManifest() {
   }, [activeTripId]);
 
   async function saveItinerary(next) {
+    const changeMessages = diffNamedList(itinerary, next, "itinerary event", [
+      ["date", "Date"], ["time", "Time"], ["title", "Title"], ["description", "Description"],
+    ]);
     setItinerary(next);
     try {
       await storageSet("itinerary:" + activeTripId, JSON.stringify(next));
+      logActivity(commissionAuth?.token, changeMessages);
     } catch {
       // Read-only session — already showing the data above, it just won't persist.
     }
@@ -515,6 +654,24 @@ export default function NoirBookingManifest() {
     reader.readAsDataURL(file);
   }
 
+  function handleSponsorshipPhotosUpload(e) {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    setSponsorshipDraft((prev) => {
+      const room = Math.max(0, 10 - (prev.photos || []).length);
+      const toAdd = files.slice(0, room);
+      toAdd.forEach((file) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          setSponsorshipDraft((p) => ({ ...p, photos: [...(p.photos || []), reader.result].slice(0, 10) }));
+        };
+        reader.readAsDataURL(file);
+      });
+      return prev;
+    });
+    e.target.value = "";
+  }
+
   useEffect(() => {
     if (!activeTripId) return;
     (async () => {
@@ -530,12 +687,116 @@ export default function NoirBookingManifest() {
   }, [activeTripId]);
 
   async function saveSponsorships(next) {
+    const changeMessages = diffNamedList(sponsorships, next, "sponsorship", [
+      ["businessName", "Business name"], ["contactName", "Contact name"], ["contactInfo", "Contact info"],
+      ["socials", "Socials"], ["sponsorshipType", "Type"], ["usage", "How it's used"],
+      ["expectedReturn", "Expected return"], ["status", "Status"],
+    ]);
     setSponsorships(next);
     try {
       await storageSet("sponsorships:" + activeTripId, JSON.stringify(next));
+      logActivity(commissionAuth?.token, changeMessages);
     } catch {
       // Read-only session — already showing the data above, it just won't persist.
     }
+  }
+
+  useEffect(() => {
+    if (!activeTripId) return;
+    (async () => {
+      let config = null;
+      try {
+        const val = await storageGet("inventoryconfig:" + activeTripId);
+        config = val ? JSON.parse(val) : null;
+      } catch {
+        config = null;
+      }
+      if (!config) {
+        // First time — seed from the built-in defaults so nothing looks empty on day one.
+        config = {
+          "1": { base: { ...ROOM_INVENTORY_BASE_BY_CONTRACT["1"] }, onRequest: { ...ROOM_INVENTORY_ON_REQUEST_BY_CONTRACT["1"] } },
+          "2": { base: { ...ROOM_INVENTORY_BASE_BY_CONTRACT["2"] }, onRequest: { ...ROOM_INVENTORY_ON_REQUEST_BY_CONTRACT["2"] } },
+        };
+        try {
+          await storageSet("inventoryconfig:" + activeTripId, JSON.stringify(config));
+        } catch {
+          // Read-only session — still show the seeded defaults locally.
+        }
+      }
+      setInventoryConfig(config);
+    })();
+  }, [activeTripId]);
+
+  async function saveInventoryConfig(next) {
+    const changeMessages = [];
+    ["1", "2"].forEach((contract) => {
+      const oldBase = inventoryConfig?.[contract]?.base || {};
+      const newBase = next?.[contract]?.base || {};
+      const oldReq = inventoryConfig?.[contract]?.onRequest || {};
+      const newReq = next?.[contract]?.onRequest || {};
+      ROOM_TYPE_ORDER.forEach((roomType) => {
+        const oldB = Number(oldBase[roomType]) || 0;
+        const newB = Number(newBase[roomType]) || 0;
+        if (oldB !== newB) {
+          changeMessages.push(`changed Contract ${contract} ${roomType} in-inventory from ${oldB} to ${newB}`);
+        }
+        const oldR = Number(oldReq[roomType]) || 0;
+        const newR = Number(newReq[roomType]) || 0;
+        if (oldR !== newR) {
+          changeMessages.push(`changed Contract ${contract} ${roomType} on-request from ${oldR} to ${newR}`);
+        }
+      });
+    });
+    setInventoryConfig(next);
+    try {
+      await storageSet("inventoryconfig:" + activeTripId, JSON.stringify(next));
+      logActivity(commissionAuth?.token, changeMessages);
+    } catch {
+      // Read-only session — already showing the data above, it just won't persist.
+    }
+  }
+
+  useEffect(() => {
+    if (!activeTripId) return;
+    (async () => {
+      let config = null;
+      try {
+        const val = await storageGet("tabconfig:" + activeTripId);
+        config = val ? JSON.parse(val) : null;
+      } catch {
+        config = null;
+      }
+      if (!config) {
+        setTabConfig({ order: DEFAULT_TAB_ORDER, labels: DEFAULT_TAB_LABELS });
+        return;
+      }
+      // Merge in any new tab keys that were added after this config was first saved
+      // (e.g. a brand new tab shipped later), so they still show up.
+      const mergedOrder = [...config.order, ...DEFAULT_TAB_ORDER.filter((k) => !config.order.includes(k))];
+      setTabConfig({ order: mergedOrder, labels: { ...DEFAULT_TAB_LABELS, ...config.labels } });
+    })();
+  }, [activeTripId]);
+
+  async function saveTabConfig(next) {
+    setTabConfig(next);
+    try {
+      await storageSet("tabconfig:" + activeTripId, JSON.stringify(next));
+    } catch {
+      // Read-only session — already showing the data above, it just won't persist.
+    }
+  }
+
+  function moveTab(key, direction) {
+    const order = [...tabConfig.order];
+    const i = order.indexOf(key);
+    const j = i + direction;
+    if (j < 0 || j >= order.length) return;
+    [order[i], order[j]] = [order[j], order[i]];
+    saveTabConfig({ ...tabConfig, order });
+  }
+
+  function renameTab(key, label) {
+    setTabConfig({ ...tabConfig, labels: { ...tabConfig.labels, [key]: label } });
   }
 
   function openAddSponsorship() {
@@ -632,16 +893,63 @@ export default function NoirBookingManifest() {
   }
 
   async function saveRoster(next) {
+    const changeMessages = diffGuestRoster(roster, next);
     const synced = syncRoomFinancials(next);
     setRoster(synced);
     setSaving(true);
     try {
       await storageSet("roster:" + activeTripId, JSON.stringify(synced));
+      logActivity(commissionAuth?.token, changeMessages);
     } catch {
       setError("Save failed — your last change may not have synced.");
     } finally {
       setSaving(false);
     }
+  }
+
+  function openAddFlight() {
+    setEditingFlightGuestIds(null);
+    setFlightGuestFilter("");
+    setFlightDraft({ airline: "", flightNumber: "", arrivalDate: "", arrivalTime: "", guestIds: [] });
+    setShowFlightForm(true);
+  }
+
+  function openEditFlight(f) {
+    setEditingFlightGuestIds(f.guestIds);
+    setFlightGuestFilter("");
+    setFlightDraft({
+      airline: f.airline || "",
+      flightNumber: f.flightNumber || "",
+      arrivalDate: f.arrivalDate || "",
+      arrivalTime: f.arrivalTime || "",
+      guestIds: [...f.guestIds],
+    });
+    setShowFlightForm(true);
+  }
+
+  async function submitFlight(e) {
+    e.preventDefault();
+    if (!flightDraft.airline.trim() && !flightDraft.flightNumber.trim()) return;
+    const selectedSet = new Set(flightDraft.guestIds);
+    const previouslyOnThisFlight = new Set(editingFlightGuestIds || []);
+    const next = roster.map((g) => {
+      if (selectedSet.has(g.id)) {
+        return {
+          ...g,
+          airline: flightDraft.airline,
+          flightNumber: flightDraft.flightNumber,
+          arrivalDate: flightDraft.arrivalDate || g.arrivalDate,
+          arrivalTime: flightDraft.arrivalTime,
+        };
+      }
+      if (previouslyOnThisFlight.has(g.id)) {
+        // Was on this flight, got unchecked — clear their flight info rather than leave it stale.
+        return { ...g, airline: "", flightNumber: "", arrivalTime: "" };
+      }
+      return g;
+    });
+    await saveRoster(next);
+    setShowFlightForm(false);
   }
 
   async function saveTrips(next) {
@@ -686,6 +994,24 @@ export default function NoirBookingManifest() {
       const key = (g.roomGroup && g.roomGroup.trim().toLowerCase()) || "solo:" + g.id;
       if (!roomMap.has(key)) roomMap.set(key, []);
       roomMap.get(key).push(g);
+    });
+    const occupancyCounts = { single: 0, double: 0, triple: 0, other: 0 };
+    const occupancyNames = { single: [], double: [], triple: [], other: [] };
+    roomMap.forEach((guestsInRoom) => {
+      const label = guestsInRoom.map((g) => g.name).join(" & ");
+      if (guestsInRoom.length === 1) {
+        occupancyCounts.single += 1;
+        occupancyNames.single.push(label);
+      } else if (guestsInRoom.length === 2) {
+        occupancyCounts.double += 1;
+        occupancyNames.double.push(label);
+      } else if (guestsInRoom.length === 3) {
+        occupancyCounts.triple += 1;
+        occupancyNames.triple.push(label);
+      } else {
+        occupancyCounts.other += 1;
+        occupancyNames.other.push(label);
+      }
     });
     const menCount = active.filter((g) => g.gender === "M").length;
     const womenCount = active.filter((g) => g.gender === "F").length;
@@ -862,6 +1188,8 @@ export default function NoirBookingManifest() {
       womenCount,
       ageCounts,
       travelStatusCounts,
+      occupancyCounts,
+      occupancyNames,
       guestStatusCounts,
       couplesCount,
       couplesNames,
@@ -916,6 +1244,46 @@ export default function NoirBookingManifest() {
     () => computeStats(roster ? roster.filter((g) => (g.contract || "1") === activeContract) : null),
     [roster, activeContract]
   );
+
+  const flightStats = useMemo(() => {
+    if (!roster) return null;
+    const active = roster.filter((g) => !g.cancelled);
+
+    const dateMap = new Map();
+    active.forEach((g) => {
+      const d = g.arrivalDate || "No date set";
+      if (!dateMap.has(d)) dateMap.set(d, []);
+      dateMap.get(d).push(g.name);
+    });
+    const arrivalsByDate = Array.from(dateMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+
+    const flightMap = new Map();
+    let noFlightInfoCount = 0;
+    active.forEach((g) => {
+      if (!g.flightNumber && !g.airline) {
+        noFlightInfoCount += 1;
+        return;
+      }
+      const key = (g.airline || "").trim().toLowerCase() + "|" + (g.flightNumber || "").trim().toLowerCase();
+      if (!flightMap.has(key)) {
+        flightMap.set(key, {
+          airline: g.airline,
+          flightNumber: g.flightNumber,
+          arrivalDate: g.arrivalDate,
+          arrivalTime: g.arrivalTime,
+          names: [],
+          guestIds: [],
+        });
+      }
+      flightMap.get(key).names.push(g.name);
+      flightMap.get(key).guestIds.push(g.id);
+    });
+    const flights = Array.from(flightMap.values()).sort(
+      (a, b) => (a.arrivalDate || "").localeCompare(b.arrivalDate || "") || (a.arrivalTime || "").localeCompare(b.arrivalTime || "")
+    );
+
+    return { arrivalsByDate, flights, noFlightInfoCount, totalArriving: active.length };
+  }, [roster]);
 
   const visibleRoster = useMemo(() => {
     if (!roster) return [];
@@ -1118,6 +1486,18 @@ export default function NoirBookingManifest() {
         .noir-subnavparent.active { background: transparent; color: var(--accent-inverse); }
         .noir-subnavchildren { display: flex; flex-direction: column; gap: 1px; margin-left: 12px; }
         .noir-subnavchild { font-size: 12px; padding: 5px 10px; }
+        .noir-tabcustomize { margin-top: 8px; padding: 8px; background: var(--panel2); border-radius: 8px; }
+        .noir-tabcustomizerow { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+        .noir-tabcustomizearrows { display: flex; flex-direction: column; gap: 1px; }
+        .noir-tabcustomizearrows button {
+          background: transparent; border: 1px solid var(--line); color: var(--muted-inverse);
+          border-radius: 4px; width: 18px; height: 15px; font-size: 9px; cursor: pointer; line-height: 1;
+        }
+        .noir-tabcustomizearrows button:disabled { opacity: 0.3; cursor: default; }
+        .noir-tabcustomizerow input {
+          flex: 1; background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+          padding: 4px 8px; color: var(--text); font-size: 11.5px; font-family: 'IBM Plex Sans', sans-serif;
+        }
         .noir-addtrip {
           margin-top: 10px;
           background: transparent;
@@ -1224,6 +1604,14 @@ export default function NoirBookingManifest() {
         }
         .noir-itineraryevent:hover { border-color: var(--muted-inverse); }
         .noir-itineraryphoto { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; flex-shrink: 0; }
+        .noir-sponsorphotogrid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 8px; }
+        .noir-sponsorphotothumb { position: relative; }
+        .noir-sponsorphotothumb img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 6px; display: block; }
+        .noir-sponsorphotothumb button {
+          position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%;
+          background: var(--panel); border: 1px solid var(--line); color: var(--text-inverse);
+          font-size: 12px; line-height: 1; cursor: pointer; padding: 0;
+        }
         .noir-itinerarybody { flex: 1; }
         .noir-itinerarytitle { color: var(--text-inverse); font-weight: 500; font-size: 14px; }
         .noir-itinerarytime {
@@ -1246,6 +1634,10 @@ export default function NoirBookingManifest() {
           cursor: pointer; color: var(--text-inverse); font-family: 'IBM Plex Mono', monospace; font-size: 13px;
         }
         .noir-ratesrowbtn:hover { background: var(--panel2); }
+        .noir-inlinenum {
+          width: 70px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+          padding: 4px 8px; color: var(--text); font-family: 'IBM Plex Mono', monospace; font-size: 13px;
+        }
         .noir-demotablehead {
           display: grid; grid-template-columns: 1.2fr 1.1fr 1.3fr 1.6fr 1.3fr; gap: 8px;
           background: var(--panel2); color: var(--muted-inverse); font-size: 10.5px;
@@ -1491,11 +1883,11 @@ export default function NoirBookingManifest() {
               </button>
               {t.id === activeTripId && (
                 <div className="noir-subnav">
-                  <div className="noir-subnavgroup">
+                  <div className="noir-subnavgroup" style={{ order: tabConfig.order.indexOf("roster") }}>
                     <div
                       className={"noir-subnavitem noir-subnavparent" + (activePage === "roster" ? " active" : "")}
                     >
-                      Roster
+                      {tabConfig.labels.roster}
                     </div>
                     <div className="noir-subnavchildren">
                       <button
@@ -1513,16 +1905,24 @@ export default function NoirBookingManifest() {
                     </div>
                   </div>
                   <button
+                    style={{ order: tabConfig.order.indexOf("demographics") }}
                     className={"noir-subnavitem" + (activePage === "demographics" ? " active" : "")}
                     onClick={() => setActivePage("demographics")}
                   >
-                    Demographics
+                    {tabConfig.labels.demographics}
                   </button>
-                  <div className="noir-subnavgroup">
+                  <button
+                    style={{ order: tabConfig.order.indexOf("flights") }}
+                    className={"noir-subnavitem" + (activePage === "flights" ? " active" : "")}
+                    onClick={() => setActivePage("flights")}
+                  >
+                    {tabConfig.labels.flights}
+                  </button>
+                  <div className="noir-subnavgroup" style={{ order: tabConfig.order.indexOf("inventory") }}>
                     <div
                       className={"noir-subnavitem noir-subnavparent" + (activePage === "inventory" ? " active" : "")}
                     >
-                      Inventory
+                      {tabConfig.labels.inventory}
                     </div>
                     <div className="noir-subnavchildren">
                       <button
@@ -1540,36 +1940,50 @@ export default function NoirBookingManifest() {
                     </div>
                   </div>
                   <button
+                    style={{ order: tabConfig.order.indexOf("commission") }}
                     className={"noir-subnavitem" + (activePage === "commission" ? " active" : "")}
                     onClick={() => setActivePage("commission")}
                   >
-                    Commission
+                    {tabConfig.labels.commission}
                   </button>
                   {commissionAuth && commissionAuth.lead && (
                     <button
+                      style={{ order: tabConfig.order.indexOf("rates") }}
                       className={"noir-subnavitem" + (activePage === "rates" ? " active" : "")}
                       onClick={() => setActivePage("rates")}
                     >
-                      Rates & Verification
+                      {tabConfig.labels.rates}
+                    </button>
+                  )}
+                  {commissionAuth && commissionAuth.lead && (
+                    <button
+                      style={{ order: tabConfig.order.indexOf("activitylog") }}
+                      className={"noir-subnavitem" + (activePage === "activitylog" ? " active" : "")}
+                      onClick={() => setActivePage("activitylog")}
+                    >
+                      {tabConfig.labels.activitylog}
                     </button>
                   )}
                   <button
+                    style={{ order: tabConfig.order.indexOf("vendors") }}
                     className={"noir-subnavitem" + (activePage === "vendors" ? " active" : "")}
                     onClick={() => setActivePage("vendors")}
                   >
-                    Vendors
+                    {tabConfig.labels.vendors}
                   </button>
                   <button
+                    style={{ order: tabConfig.order.indexOf("itinerary") }}
                     className={"noir-subnavitem" + (activePage === "itinerary" ? " active" : "")}
                     onClick={() => setActivePage("itinerary")}
                   >
-                    Itinerary
+                    {tabConfig.labels.itinerary}
                   </button>
                   <button
+                    style={{ order: tabConfig.order.indexOf("sponsorship") }}
                     className={"noir-subnavitem" + (activePage === "sponsorship" ? " active" : "")}
                     onClick={() => setActivePage("sponsorship")}
                   >
-                    Sponsorship
+                    {tabConfig.labels.sponsorship}
                   </button>
                 </div>
               )}
@@ -1577,6 +1991,44 @@ export default function NoirBookingManifest() {
           ))}
         </div>
         <button className="noir-addtrip" onClick={openAddTrip}>+ New trip</button>
+
+        {commissionAuth && commissionAuth.lead && (
+          <div style={{ marginTop: 10 }}>
+            <button
+              type="button"
+              className="noir-btn ghost"
+              style={{ width: "100%", fontSize: 11.5 }}
+              onClick={() => setCustomizingTabs((v) => !v)}
+            >
+              {customizingTabs ? "Done customizing" : "Customize tabs"}
+            </button>
+            {customizingTabs && (
+              <div className="noir-tabcustomize">
+                {tabConfig.order.map((key, i) => (
+                  <div key={key} className="noir-tabcustomizerow">
+                    <div className="noir-tabcustomizearrows">
+                      <button type="button" disabled={i === 0} onClick={() => moveTab(key, -1)}>↑</button>
+                      <button type="button" disabled={i === tabConfig.order.length - 1} onClick={() => moveTab(key, 1)}>↓</button>
+                    </div>
+                    <input
+                      type="text"
+                      value={tabConfig.labels[key] ?? DEFAULT_TAB_LABELS[key]}
+                      onChange={(e) => renameTab(key, e.target.value)}
+                    />
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  className="noir-btn"
+                  style={{ width: "100%", marginTop: 8, fontSize: 11.5 }}
+                  onClick={() => saveTabConfig(tabConfig)}
+                >
+                  Save tab names
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
       </div>
 
@@ -1729,6 +2181,28 @@ export default function NoirBookingManifest() {
               </button>
             </div>
 
+            <div className="noir-blocklabel">Rooms by occupancy · click a card to see which rooms</div>
+            <div className="noir-stats" style={{ gridTemplateColumns: `repeat(${stats.occupancyCounts.other > 0 ? 4 : 3}, 1fr)`, marginBottom: 20, maxWidth: 560 }}>
+              <button type="button" className={"noir-statcard noir-statcard-clickable" + (demoOpenKey === "occ-single" ? " active" : "")} onClick={() => setDemoOpenKey(demoOpenKey === "occ-single" ? null : "occ-single")}>
+                <div className="noir-statlabel">Single</div>
+                <div className="noir-statval">{stats.occupancyCounts.single}</div>
+              </button>
+              <button type="button" className={"noir-statcard noir-statcard-clickable" + (demoOpenKey === "occ-double" ? " active" : "")} onClick={() => setDemoOpenKey(demoOpenKey === "occ-double" ? null : "occ-double")}>
+                <div className="noir-statlabel">Double</div>
+                <div className="noir-statval">{stats.occupancyCounts.double}</div>
+              </button>
+              <button type="button" className={"noir-statcard noir-statcard-clickable" + (demoOpenKey === "occ-triple" ? " active" : "")} onClick={() => setDemoOpenKey(demoOpenKey === "occ-triple" ? null : "occ-triple")}>
+                <div className="noir-statlabel">Triple</div>
+                <div className="noir-statval">{stats.occupancyCounts.triple}</div>
+              </button>
+              {stats.occupancyCounts.other > 0 && (
+                <button type="button" className={"noir-statcard noir-statcard-clickable" + (demoOpenKey === "occ-other" ? " active" : "")} onClick={() => setDemoOpenKey(demoOpenKey === "occ-other" ? null : "occ-other")}>
+                  <div className="noir-statlabel">4+</div>
+                  <div className="noir-statval">{stats.occupancyCounts.other}</div>
+                </button>
+              )}
+            </div>
+
             {demoOpenKey && !demoOpenKey.startsWith("celeb:") && (
               <div className="noir-agentblock">
                 <div className="noir-blocklabel">
@@ -1744,6 +2218,10 @@ export default function NoirBookingManifest() {
                       "age-50+": "Age 50+",
                       new: "New guests",
                       returning: "Returning guests",
+                      "occ-single": "Single occupancy rooms",
+                      "occ-double": "Double occupancy rooms",
+                      "occ-triple": "Triple occupancy rooms",
+                      "occ-other": "4+ occupancy rooms",
                     }[demoOpenKey]
                   }
                 </div>
@@ -1760,6 +2238,10 @@ export default function NoirBookingManifest() {
                       "age-50+": stats.ageNames["50+"],
                       new: stats.guestStatusNames.New,
                       returning: stats.guestStatusNames.Returning,
+                      "occ-single": stats.occupancyNames.single,
+                      "occ-double": stats.occupancyNames.double,
+                      "occ-triple": stats.occupancyNames.triple,
+                      "occ-other": stats.occupancyNames.other,
                     }[demoOpenKey] || [];
                   return list.length === 0 ? (
                     <div className="noir-empty" style={{ padding: "10px 0" }}>No one here yet.</div>
@@ -1912,13 +2394,87 @@ export default function NoirBookingManifest() {
           </div>
         )}
 
-        {activePage === "inventory" && contractStats && (
+        {activePage === "flights" && flightStats && (
+          <div className="noir-demopage">
+            <div className="noir-header" style={{ marginBottom: 18 }}>
+              <div className="noir-blocklabel" style={{ marginBottom: 0 }}>Flights</div>
+              <button className="noir-btn" onClick={openAddFlight}>+ Add flight</button>
+            </div>
+            <div className="noir-blocklabel">Arrivals by day · click a card to see who</div>
+            <div className="noir-agentcards" style={{ marginBottom: 24 }}>
+              {flightStats.arrivalsByDate.map(([date, names]) => (
+                <button
+                  type="button"
+                  key={date}
+                  className={"noir-agentcard" + (flightsOpenDate === date ? " active" : "")}
+                  onClick={() => setFlightsOpenDate(flightsOpenDate === date ? null : date)}
+                >
+                  <div className="noir-statlabel">{fmtDate(date) || date}</div>
+                  <div className="noir-statval">{names.length}</div>
+                </button>
+              ))}
+            </div>
+            {flightsOpenDate && (
+              <div className="noir-agentblock" style={{ marginBottom: 24 }}>
+                <div className="noir-blocklabel">Arriving {fmtDate(flightsOpenDate) || flightsOpenDate}</div>
+                <div className="noir-referredlist" style={{ borderTop: "none", padding: "10px 14px" }}>
+                  {flightStats.arrivalsByDate.find(([d]) => d === flightsOpenDate)?.[1].map((name) => (
+                    <div key={name} className="noir-referreditem">{name}</div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="noir-blocklabel">By flight · click a card to see who's on it</div>
+            {flightStats.flights.length === 0 ? (
+              <div className="noir-empty">No flight info entered yet. Add airline and flight number on a guest's profile.</div>
+            ) : (
+              <div className="noir-vendorgrid">
+                {flightStats.flights.map((f, i) => {
+                  const key = (f.airline || "") + "|" + (f.flightNumber || "") + "|" + i;
+                  return (
+                    <div
+                      key={key}
+                      className="noir-vendorcard"
+                      onClick={() => setFlightsOpenFlight(flightsOpenFlight === key ? null : key)}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                        <div className="noir-vendorname">{f.airline || "Airline TBD"} {f.flightNumber || ""}</div>
+                        <button
+                          type="button"
+                          className="noir-btn ghost"
+                          style={{ padding: "2px 8px", fontSize: 11 }}
+                          onClick={(e) => { e.stopPropagation(); openEditFlight(f); }}
+                        >
+                          Edit
+                        </button>
+                      </div>
+                      {f.arrivalDate && <div className="noir-vendordetail">{fmtDate(f.arrivalDate) || f.arrivalDate}{f.arrivalTime ? " · " + f.arrivalTime : ""}</div>}
+                      <div className="noir-vendorcategory">{f.names.length} on this flight</div>
+                      {flightsOpenFlight === key && (
+                        <div className="noir-vendornotes">{f.names.join(", ")}</div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {flightStats.noFlightInfoCount > 0 && (
+              <div className="noir-hint" style={{ marginTop: 16 }}>
+                {flightStats.noFlightInfoCount} guest{flightStats.noFlightInfoCount === 1 ? "" : "s"} without flight
+                info yet — add airline and flight number on their profile to include them here.
+              </div>
+            )}
+          </div>
+        )}
+
+        {activePage === "inventory" && contractStats && inventoryConfig && (
           <div className="noir-demopage">
             {(() => {
-              const baseTable = ROOM_INVENTORY_BASE_BY_CONTRACT[activeContract] || {};
-              const onRequestTable = ROOM_INVENTORY_ON_REQUEST_BY_CONTRACT[activeContract] || {};
-              const totalInventory = ROOM_TYPE_ORDER.reduce((s, t) => s + (baseTable[t] || 0), 0);
-              const totalOnRequest = ROOM_TYPE_ORDER.reduce((s, t) => s + (onRequestTable[t] || 0), 0);
+              const baseTable = inventoryConfig[activeContract]?.base || {};
+              const onRequestTable = inventoryConfig[activeContract]?.onRequest || {};
+              const totalInventory = ROOM_TYPE_ORDER.reduce((s, t) => s + (Number(baseTable[t]) || 0), 0);
+              const totalOnRequest = ROOM_TYPE_ORDER.reduce((s, t) => s + (Number(onRequestTable[t]) || 0), 0);
               const totalBooked = ROOM_TYPE_ORDER.reduce((s, t) => s + (contractStats.roomTypeCounts[t] || 0), 0);
               return (
                 <div className="noir-stats" style={{ gridTemplateColumns: "repeat(3, 1fr)", marginBottom: 20, maxWidth: 500 }}>
@@ -1938,7 +2494,86 @@ export default function NoirBookingManifest() {
               );
             })()}
 
-            <div className="noir-blocklabel">Contract {activeContract} · by room type · click a row to see who's booked</div>
+            <div className="noir-header" style={{ marginBottom: 12 }}>
+              <div className="noir-blocklabel" style={{ marginBottom: 0 }}>Contract {activeContract} · by room type · click a row to see who's booked</div>
+              <button
+                className="noir-btn ghost"
+                onClick={() => {
+                  if (!editingInventory) {
+                    setInventoryDraft({
+                      base: { ...(inventoryConfig[activeContract]?.base || {}) },
+                      onRequest: { ...(inventoryConfig[activeContract]?.onRequest || {}) },
+                    });
+                  }
+                  setEditingInventory((v) => !v);
+                }}
+              >
+                {editingInventory ? "Cancel" : "Edit inventory"}
+              </button>
+            </div>
+
+            {editingInventory ? (
+              <>
+                <div className="noir-ratesgrid">
+                  <div className="noir-ratesheadrow" style={{ gridTemplateColumns: "1.4fr repeat(2, 1fr)" }}>
+                    <div>Room type</div>
+                    <div>In inventory</div>
+                    <div>On request</div>
+                  </div>
+                  {ROOM_TYPE_ORDER.map((roomType) => (
+                    <div className="noir-ratesrow" style={{ gridTemplateColumns: "1.4fr repeat(2, 1fr)" }} key={roomType}>
+                      <div className="noir-ratesroomtype">{roomType}</div>
+                      <input
+                        type="number"
+                        min="0"
+                        className="noir-inlinenum"
+                        value={inventoryDraft.base[roomType] ?? ""}
+                        onChange={(e) =>
+                          setInventoryDraft({
+                            ...inventoryDraft,
+                            base: { ...inventoryDraft.base, [roomType]: e.target.value },
+                          })
+                        }
+                      />
+                      <input
+                        type="number"
+                        min="0"
+                        className="noir-inlinenum"
+                        value={inventoryDraft.onRequest[roomType] ?? ""}
+                        onChange={(e) =>
+                          setInventoryDraft({
+                            ...inventoryDraft,
+                            onRequest: { ...inventoryDraft.onRequest, [roomType]: e.target.value },
+                          })
+                        }
+                      />
+                    </div>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className="noir-btn"
+                  style={{ marginTop: 12 }}
+                  onClick={async () => {
+                    const cleanBase = {};
+                    const cleanOnRequest = {};
+                    ROOM_TYPE_ORDER.forEach((t) => {
+                      const b = Number(inventoryDraft.base[t]) || 0;
+                      const r = Number(inventoryDraft.onRequest[t]) || 0;
+                      if (b > 0) cleanBase[t] = b;
+                      if (r > 0) cleanOnRequest[t] = r;
+                    });
+                    await saveInventoryConfig({
+                      ...inventoryConfig,
+                      [activeContract]: { base: cleanBase, onRequest: cleanOnRequest },
+                    });
+                    setEditingInventory(false);
+                  }}
+                >
+                  Save inventory
+                </button>
+              </>
+            ) : (
             <div className="noir-ratesgrid">
               <div className="noir-ratesheadrow" style={{ gridTemplateColumns: "1.4fr repeat(4, 1fr)" }}>
                 <div>Room type</div>
@@ -1948,10 +2583,10 @@ export default function NoirBookingManifest() {
                 <div>Available</div>
               </div>
               {ROOM_TYPE_ORDER.map((roomType) => {
-                const baseTable = ROOM_INVENTORY_BASE_BY_CONTRACT[activeContract] || {};
-                const onRequestTable = ROOM_INVENTORY_ON_REQUEST_BY_CONTRACT[activeContract] || {};
-                const inInventory = baseTable[roomType] || 0;
-                const onRequest = onRequestTable[roomType] || 0;
+                const baseTable = inventoryConfig[activeContract]?.base || {};
+                const onRequestTable = inventoryConfig[activeContract]?.onRequest || {};
+                const inInventory = Number(baseTable[roomType]) || 0;
+                const onRequest = Number(onRequestTable[roomType]) || 0;
                 const booked = contractStats.roomTypeCounts[roomType] || 0;
                 if (inInventory === 0 && onRequest === 0 && booked === 0) return null;
                 const available = inInventory - booked;
@@ -1972,6 +2607,7 @@ export default function NoirBookingManifest() {
                 );
               })}
             </div>
+            )}
 
             {inventoryOpenRoomType && (
               <div className="noir-agentblock">
@@ -2178,6 +2814,76 @@ export default function NoirBookingManifest() {
                       })}
                     </div>
 
+                    {commissionData.bonus && (
+                      <>
+                        <div className="noir-blocklabel" style={{ marginTop: 24 }}>Bonus commission potential</div>
+                        <div className="noir-hint" style={{ marginBottom: 10 }}>
+                          For every {commissionData.bonus.roomsPerIncrement} priced rooms booked trip-wide, the group earns an
+                          estimated {money(commissionData.bonus.amountPerIncrement)} bonus — split only between Carnisa, Asia, and
+                          LaQuanda based on each one's share of all priced rooms. Whatever share belongs to Adrienne's and Free
+                          Agent rooms rolls into the markup pool instead, the same way unattributed commission already does.
+                        </div>
+                        <div className="noir-stats" style={{ gridTemplateColumns: "repeat(3, 1fr)", marginBottom: 12, maxWidth: 620 }}>
+                          <div className="noir-statcard">
+                            <div className="noir-statlabel">Priced rooms so far</div>
+                            <div className="noir-statval">{commissionData.bonus.totalPricedRooms}</div>
+                          </div>
+                          <div className="noir-statcard">
+                            <div className="noir-statlabel">Bonus increments earned</div>
+                            <div className="noir-statval">{commissionData.bonus.bonusIncrements}</div>
+                          </div>
+                          <div className="noir-statcard">
+                            <div className="noir-statlabel">Total bonus pool</div>
+                            <div className="noir-statval">{money(commissionData.bonus.bonusPool)}</div>
+                          </div>
+                        </div>
+                        <div className="noir-agentcards" style={{ marginBottom: 12 }}>
+                          {["Carnisa", "Asia", "LaQuanda"].map((agent) => (
+                            <div key={agent} className="noir-agentcard" style={{ cursor: "default" }}>
+                              <div className="noir-statlabel">{agent}</div>
+                              <div className="noir-statval">{money(commissionData.bonus.shares[agent] || 0)}</div>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="noir-hint">
+                          {money(commissionData.bonus.toMarkupPool)} of the bonus pool rolls into the markup pool (Adrienne's
+                          and Free Agent rooms' share of the stake).
+                        </div>
+                      </>
+                    )}
+
+                    {commissionData.override && (
+                      <>
+                        <div className="noir-blocklabel" style={{ marginTop: 24 }}>Your override earnings</div>
+                        <div className="noir-hint" style={{ marginBottom: 10 }}>
+                          10% of Asia's and LaQuanda's earnings, room commission and bonus commission both.
+                        </div>
+                        <div className="noir-referrerlist">
+                          {["Asia", "LaQuanda"].map((agent) => {
+                            const src = commissionData.override.sources[agent] || { fromRoom: 0, fromBonus: 0, total: 0 };
+                            return (
+                              <div key={agent} className="noir-referrerrow">
+                                <div className="noir-referrerbtn" style={{ cursor: "default" }}>
+                                  <span>{agent}</span>
+                                  <span style={{ display: "flex", gap: 16, alignItems: "center" }}>
+                                    <span className="noir-referrercount">Room {money(src.fromRoom)}</span>
+                                    <span className="noir-referrercount">Bonus {money(src.fromBonus)}</span>
+                                    <span className="noir-referrercount">Total {money(src.total)}</span>
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <div className="noir-stats" style={{ gridTemplateColumns: "repeat(1, 1fr)", marginTop: 12, maxWidth: 300 }}>
+                          <div className="noir-statcard">
+                            <div className="noir-statlabel">Total override earnings</div>
+                            <div className="noir-statval">{money(commissionData.override.total)}</div>
+                          </div>
+                        </div>
+                      </>
+                    )}
+
                     <div className="noir-blocklabel" style={{ marginTop: 24 }}>Reset an agent's password</div>
                     <div className="noir-hint" style={{ marginBottom: 10 }}>
                       This clears whatever password they've set and puts them back on the environment-variable
@@ -2264,6 +2970,27 @@ export default function NoirBookingManifest() {
                       This only shows your own numbers and the group total — individual splits for other agents
                       aren't shown here.
                     </div>
+
+                    {commissionData.bonus && (
+                      <>
+                        <div className="noir-blocklabel" style={{ marginTop: 24 }}>Bonus commission potential</div>
+                        <div className="noir-hint" style={{ marginBottom: 10 }}>
+                          For every {commissionData.bonus.roomsPerIncrement} priced rooms booked trip-wide, the group earns an
+                          estimated {money(commissionData.bonus.amountPerIncrement)} bonus, split between Carnisa, Asia, and
+                          LaQuanda based on room stake. This shows your share and the group total only.
+                        </div>
+                        <div className="noir-stats" style={{ gridTemplateColumns: "repeat(2, 1fr)", maxWidth: 420 }}>
+                          <div className="noir-statcard">
+                            <div className="noir-statlabel">Total bonus pool · group</div>
+                            <div className="noir-statval">{money(commissionData.bonus.bonusPool)}</div>
+                          </div>
+                          <div className="noir-statcard">
+                            <div className="noir-statlabel">Your share</div>
+                            <div className="noir-statval">{money(commissionData.bonus.mine)}</div>
+                          </div>
+                        </div>
+                      </>
+                    )}
                   </>
                 )}
               </>
@@ -2403,6 +3130,43 @@ export default function NoirBookingManifest() {
           </div>
         )}
 
+        {activePage === "activitylog" && (
+          <div className="noir-demopage">
+            {!commissionAuth || !commissionAuth.lead ? (
+              <>
+                <div className="noir-blocklabel">This tab is lead-only</div>
+                <div className="noir-hint">
+                  The activity log is restricted to Carnisa. If you're seeing this, something's off — this tab
+                  shouldn't be reachable from your sidebar at all.
+                </div>
+              </>
+            ) : !activityLogEntries ? (
+              <div className="noir-empty">Loading activity log…</div>
+            ) : activityLogEntries.length === 0 ? (
+              <div className="noir-empty">No changes logged yet.</div>
+            ) : (
+              <>
+                <div className="noir-blocklabel">Who changed what, and when</div>
+                <div className="noir-referrerlist">
+                  {[...activityLogEntries].reverse().map((entry, i) => (
+                    <div key={i} className="noir-referrerrow">
+                      <div className="noir-referrerbtn" style={{ cursor: "default", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
+                        <div style={{ display: "flex", gap: 10, alignItems: "baseline", width: "100%" }}>
+                          <span style={{ fontWeight: 600 }}>{entry.who}</span>
+                          <span className="noir-referrercount" style={{ marginLeft: "auto" }}>
+                            {new Date(entry.when).toLocaleString()}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: 13, color: "var(--muted-inverse)" }}>{entry.message}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
         {activePage === "vendors" && (
           <div className="noir-demopage">
             <div className="noir-header" style={{ marginBottom: 18 }}>
@@ -2489,6 +3253,9 @@ export default function NoirBookingManifest() {
               <div className="noir-vendorgrid">
                 {sponsorships.map((s) => (
                   <button type="button" key={s.id} className="noir-vendorcard" onClick={() => openEditSponsorship(s)}>
+                    {(s.photos || []).length > 0 && (
+                      <img src={s.photos[0]} alt="" style={{ width: "100%", aspectRatio: "16/9", objectFit: "cover", borderRadius: 8, marginBottom: 8 }} />
+                    )}
                     <div className="noir-vendorname">{s.businessName}</div>
                     {s.status && (
                       <div className="noir-vendorcategory" style={{ background: s.status === "Confirmed" ? "var(--accent-inverse)" : "transparent", color: s.status === "Confirmed" ? "var(--panel)" : "var(--accent-inverse)" }}>
@@ -2500,6 +3267,9 @@ export default function NoirBookingManifest() {
                     <div className="noir-vendordetail">{s.contactName}</div>
                     <div className="noir-vendordetail">{s.contactInfo}</div>
                     {s.socials && <div className="noir-vendordetail">{s.socials}</div>}
+                    {(s.photos || []).length > 0 && (
+                      <div className="noir-vendordetail">{s.photos.length} photo{s.photos.length === 1 ? "" : "s"}</div>
+                    )}
                     {s.expectedReturn && <div className="noir-vendornotes">Expects: {s.expectedReturn}</div>}
                   </button>
                 ))}
@@ -3080,6 +3850,32 @@ export default function NoirBookingManifest() {
                     placeholder="Social tags, shoutouts, logo placement, etc."
                   />
                 </div>
+                <div className="noir-field">
+                  <label>Photos ({(sponsorshipDraft.photos || []).length} of 10)</label>
+                  {(sponsorshipDraft.photos || []).length < 10 && (
+                    <input type="file" accept="image/*" multiple onChange={handleSponsorshipPhotosUpload} />
+                  )}
+                  {(sponsorshipDraft.photos || []).length > 0 && (
+                    <div className="noir-sponsorphotogrid">
+                      {sponsorshipDraft.photos.map((photo, i) => (
+                        <div key={i} className="noir-sponsorphotothumb">
+                          <img src={photo} alt="" />
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setSponsorshipDraft({
+                                ...sponsorshipDraft,
+                                photos: sponsorshipDraft.photos.filter((_, idx) => idx !== i),
+                              })
+                            }
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 <div className="noir-modalactions">
                   {editingSponsorshipId && (
                     <button
@@ -3154,6 +3950,64 @@ export default function NoirBookingManifest() {
           </div>
         )}
 
+        {showFlightForm && flightDraft && (
+          <div className="noir-overlay">
+            <div className="noir-modal" style={{ width: 480 }}>
+              <h3>{editingFlightGuestIds ? "Edit flight" : "Add flight"}</h3>
+              <form onSubmit={submitFlight}>
+                <div className="noir-grid3">
+                  {field("Airline", flightDraft.airline, (v) => setFlightDraft({ ...flightDraft, airline: v }))}
+                  {field("Flight number", flightDraft.flightNumber, (v) => setFlightDraft({ ...flightDraft, flightNumber: v }))}
+                  {field("Arrival time", flightDraft.arrivalTime, (v) => setFlightDraft({ ...flightDraft, arrivalTime: v }))}
+                </div>
+                {field("Arrival date", flightDraft.arrivalDate, (v) => setFlightDraft({ ...flightDraft, arrivalDate: v }), "date")}
+
+                <div className="noir-field" style={{ marginTop: 14 }}>
+                  <label>Who's on this flight? ({flightDraft.guestIds.length} selected)</label>
+                  <input
+                    type="text"
+                    placeholder="Filter by name…"
+                    value={flightGuestFilter}
+                    onChange={(e) => setFlightGuestFilter(e.target.value)}
+                    style={{ marginBottom: 8 }}
+                  />
+                  <div style={{ maxHeight: 240, overflowY: "auto", border: "1px solid var(--line)", borderRadius: 8, padding: "6px 10px" }}>
+                    {(roster || [])
+                      .filter((g) => !g.cancelled)
+                      .filter((g) => g.name.toLowerCase().includes(flightGuestFilter.toLowerCase()))
+                      .sort((a, b) => a.name.localeCompare(b.name))
+                      .map((g) => (
+                        <label key={g.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", fontSize: 13 }}>
+                          <input
+                            type="checkbox"
+                            checked={flightDraft.guestIds.includes(g.id)}
+                            onChange={(e) => {
+                              const guestIds = e.target.checked
+                                ? [...flightDraft.guestIds, g.id]
+                                : flightDraft.guestIds.filter((id) => id !== g.id);
+                              setFlightDraft({ ...flightDraft, guestIds });
+                            }}
+                          />
+                          {g.name}
+                          {g.airline || g.flightNumber ? (
+                            <span style={{ color: "var(--muted-inverse)", fontSize: 11 }}>
+                              (currently {g.airline || "—"} {g.flightNumber || ""})
+                            </span>
+                          ) : null}
+                        </label>
+                      ))}
+                  </div>
+                </div>
+
+                <div className="noir-modalactions">
+                  <button type="button" className="noir-btn ghost" onClick={() => setShowFlightForm(false)}>Close</button>
+                  <button type="submit" className="noir-btn">{editingFlightGuestIds ? "Save changes" : "Add flight"}</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
         {showGuestForm && (
           <div className="noir-overlay">
             <div className="noir-modal">
@@ -3170,6 +4024,11 @@ export default function NoirBookingManifest() {
                     {field("Phone", guestDraft.phone, (v) => setGuestDraft({ ...guestDraft, phone: v }), "tel")}
                     {field("Arrival date", guestDraft.arrivalDate, (v) => setGuestDraft({ ...guestDraft, arrivalDate: v }), "date")}
                     {field("Referred by", guestDraft.referredBy, (v) => setGuestDraft({ ...guestDraft, referredBy: v }))}
+                  </div>
+                  <div className="noir-grid3" style={{ marginTop: 10 }}>
+                    {field("Arrival time", guestDraft.arrivalTime, (v) => setGuestDraft({ ...guestDraft, arrivalTime: v }))}
+                    {field("Airline", guestDraft.airline, (v) => setGuestDraft({ ...guestDraft, airline: v }))}
+                    {field("Flight number", guestDraft.flightNumber, (v) => setGuestDraft({ ...guestDraft, flightNumber: v }))}
                   </div>
                   <div className="noir-grid3" style={{ marginTop: 10 }}>
                     <div className="noir-field">
