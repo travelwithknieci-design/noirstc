@@ -356,6 +356,8 @@ export default function NoirBookingManifest() {
   const [changePasswordMessage, setChangePasswordMessage] = useState("");
   const [resetPasswordTarget, setResetPasswordTarget] = useState("");
   const [resetPasswordMessage, setResetPasswordMessage] = useState("");
+  const [concessions, setConcessions] = useState(null);
+  const [concessionsDraft, setConcessionsDraft] = useState({ count: "", value: "" });
   const [activityLogEntries, setActivityLogEntries] = useState(null);
   const [flightsOpenDate, setFlightsOpenDate] = useState(null);
   const [flightsOpenFlight, setFlightsOpenFlight] = useState(null);
@@ -797,6 +799,35 @@ export default function NoirBookingManifest() {
 
   function renameTab(key, label) {
     setTabConfig({ ...tabConfig, labels: { ...tabConfig.labels, [key]: label } });
+  }
+
+  useEffect(() => {
+    if (!activeTripId) return;
+    (async () => {
+      let val = null;
+      try {
+        const raw = await storageGet("concessions:" + activeTripId);
+        val = raw ? JSON.parse(raw) : null;
+      } catch {
+        val = null;
+      }
+      const loaded = val || { count: "", value: "" };
+      setConcessions(loaded);
+      setConcessionsDraft(loaded);
+    })();
+  }, [activeTripId]);
+
+  async function saveConcessions(next) {
+    setConcessions(next);
+    try {
+      await storageSet("concessions:" + activeTripId, JSON.stringify(next));
+      logActivity(
+        commissionAuth?.token,
+        [`set concessions to ${next.count || 0} at ${money(Number(next.value) || 0)} each`]
+      );
+    } catch {
+      // Read-only session — already showing the data above, it just won't persist.
+    }
   }
 
   function openAddSponsorship() {
@@ -1527,8 +1558,12 @@ export default function NoirBookingManifest() {
         .noir-btn:hover { filter: brightness(1.08); }
         .noir-btn.ghost {
           background: transparent;
-          color: var(--text-inverse);
+          color: var(--text);
           border: 1px solid var(--line);
+        }
+        .noir-sidebar .noir-btn.ghost,
+        .noir-overlay .noir-btn.ghost {
+          color: var(--text-inverse);
         }
         .noir-btn.ghost.noir-morebtn {
           color: var(--text);
@@ -2884,6 +2919,47 @@ export default function NoirBookingManifest() {
                       </>
                     )}
 
+                    {concessions && (
+                      <>
+                        <div className="noir-blocklabel" style={{ marginTop: 24 }}>Concessions</div>
+                        <div className="noir-hint" style={{ marginBottom: 10 }}>
+                          Enter these yourself whenever the resort confirms them — no code changes needed.
+                        </div>
+                        <div className="noir-grid3" style={{ maxWidth: 500, marginBottom: 10 }}>
+                          <div className="noir-field">
+                            <label>Concessions earned</label>
+                            <input
+                              type="number"
+                              min="0"
+                              value={concessionsDraft.count}
+                              onChange={(e) => setConcessionsDraft({ ...concessionsDraft, count: e.target.value })}
+                            />
+                          </div>
+                          <div className="noir-field">
+                            <label>Amount per concession</label>
+                            <input
+                              type="number"
+                              min="0"
+                              value={concessionsDraft.value}
+                              onChange={(e) => setConcessionsDraft({ ...concessionsDraft, value: e.target.value })}
+                            />
+                          </div>
+                          <div className="noir-field">
+                            <label>Total value</label>
+                            <input
+                              type="text"
+                              readOnly
+                              style={{ opacity: 0.8 }}
+                              value={money((Number(concessionsDraft.count) || 0) * (Number(concessionsDraft.value) || 0))}
+                            />
+                          </div>
+                        </div>
+                        <button type="button" className="noir-btn" onClick={() => saveConcessions(concessionsDraft)}>
+                          Save concessions
+                        </button>
+                      </>
+                    )}
+
                     <div className="noir-blocklabel" style={{ marginTop: 24 }}>Reset an agent's password</div>
                     <div className="noir-hint" style={{ marginBottom: 10 }}>
                       This clears whatever password they've set and puts them back on the environment-variable
@@ -3024,6 +3100,30 @@ export default function NoirBookingManifest() {
               {ROOM_TYPE_ORDER.filter((t) => t !== "PLAT 2BDRM").map((roomType) => {
                 const r1 = ROOM_RATES_BY_CONTRACT["1"][roomType]?.[5];
                 const r2 = ROOM_RATES_BY_CONTRACT["2"][roomType]?.[5];
+                return (
+                  <div className="noir-ratesrow" key={roomType}>
+                    <div className="noir-ratesroomtype">{roomType}</div>
+                    <div>{r1 ? money(r1.single) : "—"}</div>
+                    <div>{r2 ? money(r2.single) : "—"}</div>
+                    <div>{r1 ? money(r1.double) : "—"}</div>
+                    <div>{r2 ? money(r2.double) : "—"}</div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="noir-blocklabel" style={{ marginTop: 24 }}>NOIR Rates Charged (4 nights) · Contract 1 vs Contract 2</div>
+            <div className="noir-ratesgrid">
+              <div className="noir-ratesheadrow">
+                <div>Room type</div>
+                <div>C1 Single</div>
+                <div>C2 Single</div>
+                <div>C1 Double</div>
+                <div>C2 Double</div>
+              </div>
+              {ROOM_TYPE_ORDER.filter((t) => t !== "PLAT 2BDRM").map((roomType) => {
+                const r1 = ROOM_RATES_BY_CONTRACT["1"][roomType]?.[4];
+                const r2 = ROOM_RATES_BY_CONTRACT["2"][roomType]?.[4];
                 return (
                   <div className="noir-ratesrow" key={roomType}>
                     <div className="noir-ratesroomtype">{roomType}</div>
@@ -3675,7 +3775,8 @@ export default function NoirBookingManifest() {
                     <th>Type</th>
                     <th>Agent</th>
                     <th>Price</th>
-                    {agentFilter !== "all" && <th>Commission</th>}
+                    <th>Insurance</th>
+                    <th>Auto Pay</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -3690,8 +3791,6 @@ export default function NoirBookingManifest() {
                       (s, g) => s + (Number(g.price) || 0) + (g.insurance ? INSURANCE_COST : 0),
                       0
                     );
-                    const roomCommission = Number(first.commission) || 0;
-                    const roomTjkc = Number(first.tjkcDeduction) || 0;
                     return (
                       <tr key={key}>
                         <td>
@@ -3709,12 +3808,28 @@ export default function NoirBookingManifest() {
                         </td>
                         <td>{agents.length ? agents.join(" / ") : "—"}</td>
                         <td className="noir-money">{money(roomPrice)}</td>
-                        {agentFilter !== "all" && (
-                          <td className="noir-money">
-                            {money(roomCommission)}
-                            {roomTjkc > 0 && <div className="noir-sub">−{money(roomTjkc)} TJKC</div>}
-                          </td>
-                        )}
+                        <td>
+                          {ordered.map((g) => (
+                            <div key={g.id} className="noir-checkrow" style={{ padding: "3px 0" }}>
+                              <input
+                                type="checkbox"
+                                checked={!!g.insurance}
+                                onChange={() => saveRoster(roster.map((r) => (r.id === g.id ? { ...r, insurance: !r.insurance } : r)))}
+                              />
+                            </div>
+                          ))}
+                        </td>
+                        <td>
+                          {ordered.map((g) => (
+                            <div key={g.id} className="noir-checkrow" style={{ padding: "3px 0" }}>
+                              <input
+                                type="checkbox"
+                                checked={!!g.autoPay}
+                                onChange={() => saveRoster(roster.map((r) => (r.id === g.id ? { ...r, autoPay: !r.autoPay } : r)))}
+                              />
+                            </div>
+                          ))}
+                        </td>
                       </tr>
                     );
                   })}
