@@ -3053,46 +3053,6 @@ export default function NoirBookingManifest() {
                       </>
                     )}
 
-                    {concessions && (
-                      <>
-                        <div className="noir-blocklabel" style={{ marginTop: 24 }}>Concessions</div>
-                        <div className="noir-hint" style={{ marginBottom: 10 }}>
-                          Enter these yourself whenever the resort confirms them — no code changes needed.
-                        </div>
-                        <div className="noir-grid3" style={{ maxWidth: 500, marginBottom: 10 }}>
-                          <div className="noir-field">
-                            <label>Concessions earned</label>
-                            <input
-                              type="number"
-                              min="0"
-                              value={concessionsDraft.count}
-                              onChange={(e) => setConcessionsDraft({ ...concessionsDraft, count: e.target.value })}
-                            />
-                          </div>
-                          <div className="noir-field">
-                            <label>Amount per concession</label>
-                            <input
-                              type="number"
-                              min="0"
-                              value={concessionsDraft.value}
-                              onChange={(e) => setConcessionsDraft({ ...concessionsDraft, value: e.target.value })}
-                            />
-                          </div>
-                          <div className="noir-field">
-                            <label>Total value</label>
-                            <input
-                              type="text"
-                              readOnly
-                              style={{ opacity: 0.8 }}
-                              value={money((Number(concessionsDraft.count) || 0) * (Number(concessionsDraft.value) || 0))}
-                            />
-                          </div>
-                        </div>
-                        <button type="button" className="noir-btn" onClick={() => saveConcessions(concessionsDraft)}>
-                          Save concessions
-                        </button>
-                      </>
-                    )}
 
                     <div className="noir-blocklabel" style={{ marginTop: 24 }}>Reset an agent's password</div>
                     <div className="noir-hint" style={{ marginBottom: 10 }}>
