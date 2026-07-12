@@ -38,7 +38,7 @@ function fmtLogVal(v) {
 
 const GUEST_TRACKED_FIELDS = [
   ["name", "Name"], ["gender", "Gender"], ["travelStatus", "Travel status"], ["ageRange", "Age range"],
-  ["guestStatus", "New/Returning"], ["nights", "Nights"], ["instagram", "Instagram"], ["email", "Email"],
+  ["guestStatus", "New/Returning"], ["state", "State"], ["nights", "Nights"], ["instagram", "Instagram"], ["email", "Email"],
   ["phone", "Phone"], ["arrivalDate", "Arrival date"], ["arrivalTime", "Arrival time"],
   ["airline", "Airline"], ["flightNumber", "Flight number"], ["roomType", "Room type"], ["bedding", "Bedding"],
   ["dateBooked", "Date booked"], ["bookingNumber", "Booking number"], ["autoPay", "Auto pay"],
@@ -263,6 +263,7 @@ const emptyGuest = () => ({
   travelStatus: "",
   ageRange: "",
   guestStatus: "",
+  state: "",
   nights: "",
   instagram: "",
   email: "",
@@ -335,6 +336,7 @@ export default function NoirBookingManifest() {
   const [showRevenueBreakdown, setShowRevenueBreakdown] = useState(false);
   const [showReferralBreakdown, setShowReferralBreakdown] = useState(false);
   const [addonOpenKey, setAddonOpenKey] = useState(null);
+  const [arrivalOpenDate, setArrivalOpenDate] = useState(null);
   const [showAutoPayBreakdown, setShowAutoPayBreakdown] = useState(false);
   const [showCancelledBreakdown, setShowCancelledBreakdown] = useState(false);
   const [showKingBreakdown, setShowKingBreakdown] = useState(false);
@@ -358,6 +360,8 @@ export default function NoirBookingManifest() {
   const [resetPasswordMessage, setResetPasswordMessage] = useState("");
   const [concessions, setConcessions] = useState(null);
   const [concessionsDraft, setConcessionsDraft] = useState({ count: "", value: "" });
+  const [bonusConfig, setBonusConfig] = useState(null);
+  const [bonusConfigDraft, setBonusConfigDraft] = useState({ roomsPerIncrement: "", amountPerIncrement: "" });
   const [activityLogEntries, setActivityLogEntries] = useState(null);
   const [flightsOpenDate, setFlightsOpenDate] = useState(null);
   const [flightsOpenFlight, setFlightsOpenFlight] = useState(null);
@@ -409,7 +413,7 @@ export default function NoirBookingManifest() {
         setCommissionData(null);
       }
     })();
-  }, [commissionAuth, activeTripId, roster]);
+  }, [commissionAuth, activeTripId, roster, bonusConfig]);
 
   useEffect(() => {
     if (!commissionAuth || !commissionAuth.lead || !activeTripId || activePage !== "activitylog") return;
@@ -830,6 +834,35 @@ export default function NoirBookingManifest() {
     }
   }
 
+  useEffect(() => {
+    if (!activeTripId) return;
+    (async () => {
+      let val = null;
+      try {
+        const raw = await storageGet("bonusconfig:" + activeTripId);
+        val = raw ? JSON.parse(raw) : null;
+      } catch {
+        val = null;
+      }
+      const loaded = val || { roomsPerIncrement: 11, amountPerIncrement: 1610 };
+      setBonusConfig(loaded);
+      setBonusConfigDraft(loaded);
+    })();
+  }, [activeTripId]);
+
+  async function saveBonusConfig(next) {
+    setBonusConfig(next);
+    try {
+      await storageSet("bonusconfig:" + activeTripId, JSON.stringify(next));
+      logActivity(
+        commissionAuth?.token,
+        [`set bonus commission to ${money(Number(next.amountPerIncrement) || 0)} per ${next.roomsPerIncrement || 0} rooms`]
+      );
+    } catch {
+      // Read-only session — already showing the data above, it just won't persist.
+    }
+  }
+
   function openAddSponsorship() {
     setEditingSponsorshipId(null);
     setSponsorshipDraft(emptySponsorship());
@@ -1044,6 +1077,28 @@ export default function NoirBookingManifest() {
         occupancyNames.other.push(label);
       }
     });
+    const stateMap = new Map();
+    active.forEach((g) => {
+      const s = g.state && g.state.trim();
+      if (!s) return;
+      if (!stateMap.has(s)) stateMap.set(s, []);
+      stateMap.get(s).push(g.name);
+    });
+    const stateCounts = Array.from(stateMap.entries())
+      .map(([state, names]) => ({ state, count: names.length, names }))
+      .sort((a, b) => b.count - a.count);
+    const noStateCount = active.length - stateCounts.reduce((s, r) => s + r.count, 0);
+
+    const arrivalDateMap = new Map();
+    active.forEach((g) => {
+      const d = g.arrivalDate || "No date set";
+      if (!arrivalDateMap.has(d)) arrivalDateMap.set(d, []);
+      arrivalDateMap.get(d).push(g.name);
+    });
+    const arrivalDateCounts = Array.from(arrivalDateMap.entries())
+      .map(([date, names]) => ({ date, count: names.length, names }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+
     const menCount = active.filter((g) => g.gender === "M").length;
     const womenCount = active.filter((g) => g.gender === "F").length;
     const ageCounts = {
@@ -1221,6 +1276,9 @@ export default function NoirBookingManifest() {
       travelStatusCounts,
       occupancyCounts,
       occupancyNames,
+      arrivalDateCounts,
+      stateCounts,
+      noStateCount,
       guestStatusCounts,
       couplesCount,
       couplesNames,
@@ -2121,6 +2179,18 @@ export default function NoirBookingManifest() {
                   ],
                   emptyNote: "No guests tagged new/returning yet.",
                 },
+                {
+                  label: "Where everyone's from",
+                  data: (() => {
+                    const palette = ["#f1ead9", "#c9a15a", "#8a8172", "#5c5648", "#e8ddb5", "#a68a5b", "#726b5c"];
+                    const top = stats.stateCounts.slice(0, 7);
+                    const restCount = stats.stateCounts.slice(7).reduce((s, r) => s + r.count, 0);
+                    const entries = top.map((r, i) => ({ name: r.state, value: r.count, color: palette[i % palette.length] }));
+                    if (restCount > 0) entries.push({ name: "Other states", value: restCount, color: "#3d3a30" });
+                    return entries;
+                  })(),
+                  emptyNote: "No states set yet.",
+                },
               ].map((donut) => {
                 const total = donut.data.reduce((s, d) => s + d.value, 0);
                 return (
@@ -2292,6 +2362,38 @@ export default function NoirBookingManifest() {
                     </div>
                   );
                 })()}
+              </div>
+            )}
+
+            {stats.stateCounts.length > 0 && (
+              <div className="noir-agentblock">
+                <div className="noir-blocklabel">By state · click a name to see who</div>
+                <div className="noir-referrerlist">
+                  {stats.stateCounts.map((r) => (
+                    <div key={r.state} className="noir-referrerrow">
+                      <button
+                        type="button"
+                        className="noir-referrerbtn"
+                        onClick={() => setDemoOpenKey(demoOpenKey === "state:" + r.state ? null : "state:" + r.state)}
+                      >
+                        <span>{r.state}</span>
+                        <span className="noir-referrercount">{r.count}</span>
+                      </button>
+                      {demoOpenKey === "state:" + r.state && (
+                        <div className="noir-referredlist">
+                          {r.names.map((name) => (
+                            <div key={name} className="noir-referreditem">{name}</div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                {stats.noStateCount > 0 && (
+                  <div className="noir-hint" style={{ marginTop: 8 }}>
+                    {stats.noStateCount} guest{stats.noStateCount === 1 ? "" : "s"} without a state set yet.
+                  </div>
+                )}
               </div>
             )}
 
@@ -2858,6 +2960,37 @@ export default function NoirBookingManifest() {
                           LaQuanda based on each one's share of all priced rooms. Whatever share belongs to Adrienne's and Free
                           Agent rooms rolls into the markup pool instead, the same way unattributed commission already does.
                         </div>
+                        {bonusConfig && (
+                          <div className="noir-grid3" style={{ maxWidth: 500, marginBottom: 14 }}>
+                            <div className="noir-field">
+                              <label>Rooms per increment</label>
+                              <input
+                                type="number"
+                                min="1"
+                                value={bonusConfigDraft.roomsPerIncrement}
+                                onChange={(e) => setBonusConfigDraft({ ...bonusConfigDraft, roomsPerIncrement: e.target.value })}
+                              />
+                            </div>
+                            <div className="noir-field">
+                              <label>Amount per increment</label>
+                              <input
+                                type="number"
+                                min="0"
+                                value={bonusConfigDraft.amountPerIncrement}
+                                onChange={(e) => setBonusConfigDraft({ ...bonusConfigDraft, amountPerIncrement: e.target.value })}
+                              />
+                            </div>
+                            <div style={{ display: "flex", alignItems: "flex-end" }}>
+                              <button
+                                type="button"
+                                className="noir-btn"
+                                onClick={() => saveBonusConfig(bonusConfigDraft)}
+                              >
+                                Save
+                              </button>
+                            </div>
+                          </div>
+                        )}
                         <div className="noir-stats" style={{ gridTemplateColumns: "repeat(3, 1fr)", marginBottom: 12, maxWidth: 620 }}>
                           <div className="noir-statcard">
                             <div className="noir-statlabel">Priced rooms so far</div>
@@ -3419,7 +3552,7 @@ export default function NoirBookingManifest() {
                       });
                     }}
                   >
-                    {showMoreStats ? "Hide contractStats" : "View more contractStats"}
+                    {showMoreStats ? "Hide more stats" : "View more stats"}
                   </button>
                 </div>
 
@@ -3495,6 +3628,36 @@ export default function NoirBookingManifest() {
                                 <div key={name} className="noir-referreditem">{name}</div>
                               ))
                             )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {showMoreStats && (
+                  <div className="noir-agentblock">
+                    <div className="noir-blocklabel">Arrivals by date · click a card to see who</div>
+                    <div className="noir-agentcards">
+                      {contractStats.arrivalDateCounts.map((a) => (
+                        <button
+                          type="button"
+                          key={a.date}
+                          className={"noir-agentcard" + (arrivalOpenDate === a.date ? " active" : "")}
+                          onClick={() => setArrivalOpenDate(arrivalOpenDate === a.date ? null : a.date)}
+                        >
+                          <div className="noir-statlabel">{fmtDate(a.date) || a.date}</div>
+                          <div className="noir-statval">{a.count}</div>
+                        </button>
+                      ))}
+                    </div>
+                    {arrivalOpenDate && (
+                      <div className="noir-referrerlist" style={{ marginTop: 10 }}>
+                        <div className="noir-referrerrow">
+                          <div className="noir-referredlist" style={{ borderTop: "none", padding: "10px 14px" }}>
+                            {(contractStats.arrivalDateCounts.find((a) => a.date === arrivalOpenDate)?.names || []).map((name) => (
+                              <div key={name} className="noir-referreditem">{name}</div>
+                            ))}
                           </div>
                         </div>
                       </div>
@@ -4199,6 +4362,7 @@ export default function NoirBookingManifest() {
                         <option value="Returning">Returning</option>
                       </select>
                     </div>
+                    {field("State", guestDraft.state, (v) => setGuestDraft({ ...guestDraft, state: v }))}
                   </div>
                 </div>
 
