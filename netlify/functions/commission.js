@@ -24,13 +24,6 @@ function getPrimaryGuest(guestsInRoom) {
   return guestsInRoom.find((g) => g.primaryTraveler) || guestsInRoom[0];
 }
 
-function isPersonalRoom(guestsInRoom, stakeAgent) {
-  if (!stakeAgent || stakeAgent === "Free Agent") return false;
-  return guestsInRoom.some(
-    (g) => g.name && g.name.trim().split(/\s+/)[0].toLowerCase() === stakeAgent.toLowerCase()
-  );
-}
-
 function jsonResponse(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -100,12 +93,13 @@ export default async (req) => {
     const label = guestsInRoom.map((g) => g.name).join(" & ");
     totalCommission += roomCommission;
 
-    // Stake tally — same rule as the client's "Agent stake in the trip": a room
-    // counts only if it's actually priced, and an agent's own personal room never
-    // counts as one of their sales.
+    // Bonus room tally — every priced room counts toward the group's bonus threshold,
+    // including an agent's own personal room. (This is deliberately different from
+    // "Agent stake in the trip," which excludes personal rooms from an agent's
+    // individual sales percentage — that's a separate metric, computed client-side.)
     const roomPrice = guestsInRoom.reduce((s, g) => s + (Number(g.price) || 0), 0);
     const stakeAgent = primaryAgent || "Free Agent";
-    if (roomPrice > 0 && !isPersonalRoom(guestsInRoom, stakeAgent)) {
+    if (roomPrice > 0) {
       totalPricedRooms += 1;
       agentPricedRoomCounts[stakeAgent] = (agentPricedRoomCounts[stakeAgent] || 0) + 1;
     }
