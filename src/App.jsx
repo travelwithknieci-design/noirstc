@@ -46,7 +46,7 @@ const GUEST_TRACKED_FIELDS = [
   ["agent", "Agent"], ["insurance", "Insurance"], ["itinerarySent", "Itinerary sent"], ["registered", "Registered"],
   ["primaryTraveler", "Primary traveler"], ["catamaran", "Catamaran"], ["atvFarm", "ATV Farm"],
   ["sevenMile", "7 Mile"], ["clubMobay", "Club Mobay"], ["price", "Price"], ["roomGroup", "Room group"],
-  ["contract", "Contract"], ["commission", "Commission"], ["cancelled", "Cancelled"],
+  ["contract", "Contract"], ["commission", "Commission"], ["noCommission", "No commission override"], ["cancelled", "Cancelled"],
 ];
 
 function diffGuestRoster(oldList, newList) {
@@ -290,6 +290,7 @@ const emptyGuest = () => ({
   clubMobay: false,
   netBalance: "",
   commission: "",
+  noCommission: false,
   vaxBalance: "",
   tjBalance: "",
   difference: "",
@@ -914,7 +915,7 @@ export default function NoirBookingManifest() {
       const hasRate = guestsInRoom.some((g) => Number(g.price) > 0);
       const funjet = hasRate && nights ? getFunjetRate(nights, occupancyKey, roomType, primaryGuest?.contract) : null;
       const manualCommission = Number(primaryGuest?.commission) || 0;
-      const commission = funjet ? funjet.commission : manualCommission;
+      const commission = primaryGuest?.noCommission ? 0 : funjet ? funjet.commission : manualCommission;
       const primaryAgent = getRoomPrimaryAgent(guestsInRoom);
       const insuredCost = guestsInRoom.reduce((s, g) => s + (g.insurance ? INSURANCE_COST : 0), 0);
       roomInfo.set(key, {
@@ -4527,6 +4528,14 @@ export default function NoirBookingManifest() {
                   return (
                 <div className="noir-section">
                   <div className="noir-sectiontitle">Commission</div>
+                  <div className="noir-checkrow" style={{ marginBottom: 10 }}>
+                    <input
+                      type="checkbox"
+                      checked={!!guestDraft.noCommission}
+                      onChange={(e) => setGuestDraft({ ...guestDraft, noCommission: e.target.checked })}
+                    />
+                    <label>No commission on this room (e.g. an agent's own personal booking, at-cost)</label>
+                  </div>
                   <div className="noir-grid4">
                     <div className="noir-field">
                       <label>Net balance</label>
@@ -4563,6 +4572,7 @@ export default function NoirBookingManifest() {
                           : [];
                         const roomHasRate = (Number(guestDraft.price) > 0) || roommatesForRate.some((g) => Number(g.price) > 0);
                         const funjet = roomHasRate && guestDraft.nights ? getFunjetRate(guestDraft.nights, occKey, guestDraft.roomType, guestDraft.contract) : null;
+                        if (guestDraft.noCommission) return 0;
                         if (funjet) return funjet.commission;
                         if (!groupKey || !roster) return Number(guestDraft.commission) || 0;
                         const existing = roommatesForRate.find((g) => Number(g.commission) > 0);
@@ -4638,7 +4648,7 @@ export default function NoirBookingManifest() {
                       })())} style={{ opacity: 0.8 }} />
                     </div>
                     {(() => {
-                      const roomCommission = Number(guestDraft.commission) || 0;
+                      const roomCommission = guestDraft.noCommission ? 0 : Number(guestDraft.commission) || 0;
                       const agent = guestDraft.agent;
                       if (agent === "Adrienne") {
                         return (
