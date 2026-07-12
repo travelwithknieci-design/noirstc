@@ -9,8 +9,9 @@ const AGENT_SPLIT_RATES = { Carnisa: 1, Asia: 0.8, LaQuanda: 0.8 };
 // remainder (representing Adrienne's and Free Agent rooms' share of that stake)
 // rolls into the markup pool, the same way unattributed commission already does.
 const BONUS_ELIGIBLE_AGENTS = ["Carnisa", "Asia", "LaQuanda"];
-const BONUS_ROOMS_PER_INCREMENT = 11;
-const BONUS_AMOUNT_PER_INCREMENT = 1610;
+const DEFAULT_BONUS_ROOMS_PER_INCREMENT = 11;
+const DEFAULT_BONUS_AMOUNT_PER_INCREMENT = 1610;
+const BONUS_CONFIG_KEY_PREFIX = "bonusconfig:";
 
 function getRoomPrimaryAgent(guestsInRoom) {
   const primary = guestsInRoom.find((g) => g.primaryTraveler && g.agent);
@@ -55,6 +56,19 @@ export default async (req) => {
     roster = raw ? JSON.parse(raw) : [];
   } catch {
     roster = [];
+  }
+
+  let bonusRoomsPerIncrement = DEFAULT_BONUS_ROOMS_PER_INCREMENT;
+  let bonusAmountPerIncrement = DEFAULT_BONUS_AMOUNT_PER_INCREMENT;
+  try {
+    const rawConfig = await store.get(BONUS_CONFIG_KEY_PREFIX + tripId);
+    if (rawConfig) {
+      const parsed = JSON.parse(rawConfig);
+      if (Number(parsed.roomsPerIncrement) > 0) bonusRoomsPerIncrement = Number(parsed.roomsPerIncrement);
+      if (Number(parsed.amountPerIncrement) >= 0) bonusAmountPerIncrement = Number(parsed.amountPerIncrement);
+    }
+  } catch {
+    // fall back to defaults
   }
 
   const active = roster.filter((g) => !g.cancelled);
@@ -120,8 +134,8 @@ export default async (req) => {
   });
 
   // Bonus commission pool
-  const bonusIncrements = Math.floor(totalPricedRooms / BONUS_ROOMS_PER_INCREMENT);
-  const bonusPool = bonusIncrements * BONUS_AMOUNT_PER_INCREMENT;
+  const bonusIncrements = Math.floor(totalPricedRooms / bonusRoomsPerIncrement);
+  const bonusPool = bonusIncrements * bonusAmountPerIncrement;
   const bonusShares = {};
   let bonusDistributed = 0;
   BONUS_ELIGIBLE_AGENTS.forEach((agent) => {
@@ -157,8 +171,8 @@ export default async (req) => {
       markupPoolFromFreeAgents,
       agentTotals,
       bonus: {
-        roomsPerIncrement: BONUS_ROOMS_PER_INCREMENT,
-        amountPerIncrement: BONUS_AMOUNT_PER_INCREMENT,
+        roomsPerIncrement: bonusRoomsPerIncrement,
+        amountPerIncrement: bonusAmountPerIncrement,
         totalPricedRooms,
         bonusIncrements,
         bonusPool,
@@ -183,8 +197,8 @@ export default async (req) => {
     },
     bonus: isBonusEligible
       ? {
-          roomsPerIncrement: BONUS_ROOMS_PER_INCREMENT,
-          amountPerIncrement: BONUS_AMOUNT_PER_INCREMENT,
+          roomsPerIncrement: bonusRoomsPerIncrement,
+          amountPerIncrement: bonusAmountPerIncrement,
           bonusPool,
           mine: bonusShares[payload.role] || 0,
         }
