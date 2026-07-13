@@ -142,16 +142,16 @@ const FUNJET_TABLES_BY_CONTRACT = {
   "1": {
     4: {
       solo: {
-        "DLX": { net: 2442, commission: 378 },
-        "DLX Swim": { net: 2816, commission: 437 },
-        "PLS": { net: 2567, commission: 397 },
-        "PLAT": { net: 3142, commission: 488 },
-      },
-      double: {
         "DLX": { net: 1918, commission: 298 },
         "DLX Swim": { net: 2217, commission: 345 },
         "PLS": { net: 2018, commission: 314 },
         "PLAT": { net: 2478, commission: 386 },
+      },
+      double: {
+        "DLX": { net: 2442, commission: 378 },
+        "DLX Swim": { net: 2816, commission: 437 },
+        "PLS": { net: 2567, commission: 397 },
+        "PLAT": { net: 3142, commission: 488 },
       },
     },
     5: {
