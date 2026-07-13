@@ -127,7 +127,7 @@ const INSURANCE_COST = 139.99;
 const ROOM_RATES_BY_CONTRACT = {
   "1": {
     "DLX": { 4: { single: 2460, double: 1655, triple: 1545 }, 5: { single: 3000, double: 1990, triple: 1850 } },
-    "PLS": { 4: { single: 2580, double: 1730, triple: null }, 5: { single: 3145, double: 2085, triple: null } },
+    "PLS": { 4: { single: 2580, double: 1730, triple: null }, 5: { single: 3145, double: 2085, triple: null }, 6: { single: null, double: 5528, triple: null } },
     "DLX Swim": { 4: { single: 2810, double: 1870, triple: 1740 }, 5: { single: 3430, double: 2260, triple: 2100 } },
     "PLS Swim": { 4: { single: 2925, double: 1945, triple: null }, 5: { single: 3575, double: 2350, triple: null } },
     "PLAT": { 4: { single: 3110, double: 2060, triple: 1915 }, 5: { single: 3810, double: 2500, triple: 2315 } },
@@ -140,6 +140,20 @@ const OCCUPANCY_LABELS = { 1: "single", 2: "double", 3: "triple" };
 // Only Contract 1 / 5-night data exists so far.
 const FUNJET_TABLES_BY_CONTRACT = {
   "1": {
+    4: {
+      solo: {
+        "DLX": { net: 2442, commission: 378 },
+        "DLX Swim": { net: 2816, commission: 437 },
+        "PLS": { net: 2567, commission: 397 },
+        "PLAT": { net: 3142, commission: 488 },
+      },
+      double: {
+        "DLX": { net: 1918, commission: 298 },
+        "DLX Swim": { net: 2217, commission: 345 },
+        "PLS": { net: 2018, commission: 314 },
+        "PLAT": { net: 2478, commission: 386 },
+      },
+    },
     5: {
       solo: {
         "DLX": { net: 2322.97, commission: 365.03 },
@@ -154,6 +168,11 @@ const FUNJET_TABLES_BY_CONTRACT = {
         "PLS": { net: 3059.27, commission: 480.73 },
         "PLS Swim": { net: 3525.94, commission: 554.06 },
         "PLAT": { net: 3897.48, commission: 606.52 },
+      },
+    },
+    6: {
+      double: {
+        "PLS": { net: 4350.32, commission: 677.68 },
       },
     },
   },
@@ -4381,6 +4400,7 @@ export default function NoirBookingManifest() {
                         <option value="">—</option>
                         <option value="4">4</option>
                         <option value="5">5</option>
+                        <option value="6">6</option>
                       </select>
                     </div>
                   </div>
@@ -4398,7 +4418,7 @@ export default function NoirBookingManifest() {
                     }
                     const occLabel = OCCUPANCY_LABELS[occupancyCount];
                     if (!occLabel) return null;
-                    const chips = [4, 5]
+                    const chips = [4, 5, 6]
                       .map((nights) => ({ nights, price: rateTable[nights]?.[occLabel] }))
                       .filter((c) => c.price != null);
                     if (!chips.length) return null;
