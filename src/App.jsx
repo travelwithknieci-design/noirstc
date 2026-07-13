@@ -127,9 +127,9 @@ const INSURANCE_COST = 139.99;
 const ROOM_RATES_BY_CONTRACT = {
   "1": {
     "DLX": { 4: { single: 2460, double: 1655, triple: 1545 }, 5: { single: 3000, double: 1990, triple: 1850 } },
-    "PLS": { 4: { single: 2580, double: 1730, triple: null }, 5: { single: 3145, double: 2085, triple: null }, 6: { single: null, double: 5528, triple: null } },
+    "PLS": { 4: { single: 2580, double: 1730, triple: null }, 5: { single: 3145, double: 2085, triple: null } },
     "DLX Swim": { 4: { single: 2810, double: 1870, triple: 1740 }, 5: { single: 3430, double: 2260, triple: 2100 } },
-    "PLS Swim": { 4: { single: 2925, double: 1945, triple: null }, 5: { single: 3575, double: 2350, triple: null } },
+    "PLS Swim": { 4: { single: 2925, double: 1945, triple: null }, 5: { single: 3575, double: 2350, triple: null }, 6: { single: null, double: 5528, triple: null } },
     "PLAT": { 4: { single: 3110, double: 2060, triple: 1915 }, 5: { single: 3810, double: 2500, triple: 2315 } },
   },
   "2": {},
@@ -172,7 +172,7 @@ const FUNJET_TABLES_BY_CONTRACT = {
     },
     6: {
       double: {
-        "PLS": { net: 4350.32, commission: 677.68 },
+        "PLS Swim": { net: 4350.32, commission: 677.68 },
       },
     },
   },
