@@ -1836,6 +1836,15 @@ export default function NoirBookingManifest() {
           padding: 8px 14px; border-bottom: 1px dashed var(--line);
         }
         .noir-demotablerow:last-child { border-bottom: none; }
+        .noir-pasttripsrow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+        .noir-pasttripslabel { font-size: 11px; color: var(--muted-inverse); margin-right: 2px; }
+        .noir-pasttripchip {
+          background: transparent; border: 1px solid var(--line); color: var(--muted-inverse);
+          border-radius: 12px; padding: 2px 9px; font-size: 11px; cursor: pointer;
+          font-family: 'IBM Plex Sans', sans-serif;
+        }
+        .noir-pasttripchip.active { background: var(--accent-inverse); color: var(--panel); border-color: var(--accent-inverse); }
+        .noir-pasttripchip:hover { border-color: var(--muted-inverse); }
         .noir-demoname { font-size: 13px; color: var(--text-inverse); }
         .noir-piecard .noir-breakdownitem strong { color: var(--text-inverse); }
         .noir-piecard .noir-breakdownitem { color: var(--muted-inverse); }
@@ -2669,6 +2678,27 @@ export default function NoirBookingManifest() {
                           >
                             Returning
                           </button>
+                        </div>
+                        <div className="noir-pasttripsrow" style={{ gridColumn: "1 / -1" }}>
+                          <span className="noir-pasttripslabel">Past trips:</span>
+                          {PAST_NOIR_TRIPS.map((trip) => {
+                            const checked = (g.pastTrips || []).includes(trip);
+                            return (
+                              <button
+                                type="button"
+                                key={trip}
+                                className={"noir-pasttripchip" + (checked ? " active" : "")}
+                                onClick={() => {
+                                  const next = checked
+                                    ? (g.pastTrips || []).filter((t) => t !== trip)
+                                    : [...(g.pastTrips || []), trip];
+                                  saveRoster(roster.map((r) => (r.id === g.id ? { ...r, pastTrips: next } : r)));
+                                }}
+                              >
+                                {trip}
+                              </button>
+                            );
+                          })}
                         </div>
                       </div>
                     ))}
