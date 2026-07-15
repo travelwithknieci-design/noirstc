@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { PieChart, Pie, Cell, Legend, Tooltip, ResponsiveContainer } from "recharts";
+import * as XLSX from "xlsx";
 
 async function storageGet(key) {
   const res = await fetch(`/.netlify/functions/storage?key=${encodeURIComponent(key)}`);
@@ -38,7 +39,7 @@ function fmtLogVal(v) {
 
 const GUEST_TRACKED_FIELDS = [
   ["name", "Name"], ["gender", "Gender"], ["travelStatus", "Travel status"], ["ageRange", "Age range"],
-  ["guestStatus", "New/Returning"], ["state", "State"], ["nights", "Nights"], ["instagram", "Instagram"], ["email", "Email"],
+  ["guestStatus", "New/Returning"], ["state", "State"], ["pastTrips", "Past NOIR trips"], ["nights", "Nights"], ["instagram", "Instagram"], ["email", "Email"],
   ["phone", "Phone"], ["arrivalDate", "Arrival date"], ["arrivalTime", "Arrival time"],
   ["airline", "Airline"], ["flightNumber", "Flight number"], ["roomType", "Room type"], ["bedding", "Bedding"],
   ["dateBooked", "Date booked"], ["bookingNumber", "Booking number"], ["autoPay", "Auto pay"],
@@ -247,6 +248,8 @@ const emptyItineraryEvent = () => ({
   photo: "",
 });
 
+const PAST_NOIR_TRIPS = ["Cabo 2023", "Punta Cana 2024", "Antigua 2025", "St. Lucia 2026"];
+
 const DEFAULT_TAB_ORDER = ["roster", "demographics", "flights", "inventory", "commission", "rates", "activitylog", "vendors", "itinerary", "sponsorship"];
 const DEFAULT_TAB_LABELS = {
   roster: "Roster",
@@ -283,6 +286,7 @@ const emptyGuest = () => ({
   ageRange: "",
   guestStatus: "",
   state: "",
+  pastTrips: [],
   nights: "",
   instagram: "",
   email: "",
@@ -1097,6 +1101,27 @@ export default function NoirBookingManifest() {
         occupancyNames.other.push(label);
       }
     });
+    const pastTripMap = new Map();
+    PAST_NOIR_TRIPS.forEach((trip) => pastTripMap.set(trip, []));
+    let repeatGuestCount = 0;
+    const repeatGuestNames = [];
+    active.forEach((g) => {
+      const trips = g.pastTrips || [];
+      if (trips.length > 0) {
+        repeatGuestCount += 1;
+        repeatGuestNames.push(g.name);
+      }
+      trips.forEach((trip) => {
+        if (!pastTripMap.has(trip)) pastTripMap.set(trip, []);
+        pastTripMap.get(trip).push(g.name);
+      });
+    });
+    const pastTripCounts = PAST_NOIR_TRIPS.map((trip) => ({
+      trip,
+      count: (pastTripMap.get(trip) || []).length,
+      names: pastTripMap.get(trip) || [],
+    }));
+
     const stateMap = new Map();
     active.forEach((g) => {
       const s = g.state && g.state.trim();
@@ -1299,6 +1324,9 @@ export default function NoirBookingManifest() {
       arrivalDateCounts,
       stateCounts,
       noStateCount,
+      repeatGuestCount,
+      repeatGuestNames,
+      pastTripCounts,
       guestStatusCounts,
       couplesCount,
       couplesNames,
@@ -1434,6 +1462,52 @@ export default function NoirBookingManifest() {
     await saveTrips(next);
     setActiveTripId(id);
     setShowTripForm(false);
+  }
+
+  function exportRosterToExcel() {
+    const rows = visibleRoster.map((g) => ({
+      Name: g.name,
+      "Room group": g.roomGroup,
+      "Primary traveler": g.primaryTraveler ? "Yes" : "",
+      Contract: g.contract || "1",
+      Agent: g.agent,
+      "Room type": g.roomType,
+      Bedding: g.bedding,
+      Nights: g.nights,
+      "Arrival date": g.arrivalDate,
+      "Arrival time": g.arrivalTime,
+      Airline: g.airline,
+      "Flight number": g.flightNumber,
+      Gender: g.gender,
+      "Travel status": g.travelStatus,
+      "Age range": g.ageRange,
+      "New/Returning": g.guestStatus,
+      State: g.state,
+      "Past NOIR trips": (g.pastTrips || []).join(", "),
+      Instagram: g.instagram,
+      Email: g.email,
+      Phone: g.phone,
+      "Price per guest": g.price,
+      Insurance: g.insurance ? "Yes" : "",
+      "Auto pay": g.autoPay ? "Yes" : "",
+      Celebration: g.celebration,
+      "Date of celebration": g.dateOfCeleb,
+      "Referred by": g.referredBy,
+      "Date booked": g.dateBooked,
+      "Booking number": g.bookingNumber,
+      Registered: g.registered ? "Yes" : "",
+      "Itinerary sent": g.itinerarySent ? "Yes" : "",
+      Catamaran: g.catamaran ? "Yes" : "",
+      "ATV Farm": g.atvFarm ? "Yes" : "",
+      "7 Mile": g.sevenMile ? "Yes" : "",
+      "Club Mobay": g.clubMobay ? "Yes" : "",
+      Cancelled: g.cancelled ? "Yes" : "",
+    }));
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Guest List");
+    const tripLabel = (activeTrip?.name || "trip").replace(/[^a-z0-9]+/gi, "_");
+    XLSX.writeFile(workbook, `${tripLabel}_guest_list.xlsx`);
   }
 
   function openAddGuest() {
@@ -2159,6 +2233,9 @@ export default function NoirBookingManifest() {
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 {saving && <span className="noir-savingtag">Saving…</span>}
                 {activePage === "roster" && <button className="noir-btn" onClick={openAddGuest}>+ Add guest</button>}
+                {activePage === "roster" && (
+                  <button className="noir-btn ghost" onClick={exportRosterToExcel}>Export to Excel</button>
+                )}
               </div>
             </div>
 
@@ -2416,6 +2493,57 @@ export default function NoirBookingManifest() {
                 )}
               </div>
             )}
+
+            <div className="noir-agentblock">
+              <div className="noir-blocklabel">Repeat guests · click a card to see who</div>
+              <div className="noir-stats" style={{ gridTemplateColumns: "repeat(1, 1fr)", marginBottom: 14, maxWidth: 260 }}>
+                <button
+                  type="button"
+                  className={"noir-statcard noir-statcard-clickable" + (demoOpenKey === "repeat" ? " active" : "")}
+                  onClick={() => setDemoOpenKey(demoOpenKey === "repeat" ? null : "repeat")}
+                >
+                  <div className="noir-statlabel">Been on a prior NOIR trip</div>
+                  <div className="noir-statval">{stats.repeatGuestCount}</div>
+                </button>
+              </div>
+              {demoOpenKey === "repeat" && (
+                <div className="noir-referredlist" style={{ borderTop: "none", padding: "0 0 14px" }}>
+                  {stats.repeatGuestNames.length === 0 ? (
+                    <div className="noir-empty" style={{ padding: "10px 0" }}>No repeat guests tagged yet.</div>
+                  ) : (
+                    stats.repeatGuestNames.map((name) => (
+                      <div key={name} className="noir-referreditem">{name}</div>
+                    ))
+                  )}
+                </div>
+              )}
+              <div className="noir-blocklabel" style={{ marginTop: 4 }}>By past trip · click a name to see who</div>
+              <div className="noir-referrerlist">
+                {stats.pastTripCounts.map((r) => (
+                  <div key={r.trip} className="noir-referrerrow">
+                    <button
+                      type="button"
+                      className="noir-referrerbtn"
+                      onClick={() => setDemoOpenKey(demoOpenKey === "pasttrip:" + r.trip ? null : "pasttrip:" + r.trip)}
+                    >
+                      <span>{r.trip}</span>
+                      <span className="noir-referrercount">{r.count}</span>
+                    </button>
+                    {demoOpenKey === "pasttrip:" + r.trip && (
+                      <div className="noir-referredlist">
+                        {r.names.length === 0 ? (
+                          <div className="noir-referreditem">No one yet.</div>
+                        ) : (
+                          r.names.map((name) => (
+                            <div key={name} className="noir-referreditem">{name}</div>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
 
             <div className="noir-agentblock">
               <div className="noir-blocklabel">Celebrations · click a card to see who and when</div>
@@ -4343,6 +4471,26 @@ export default function NoirBookingManifest() {
                       </select>
                     </div>
                     {field("State", guestDraft.state, (v) => setGuestDraft({ ...guestDraft, state: v }))}
+                  </div>
+                  <div className="noir-field" style={{ marginTop: 10 }}>
+                    <label>Past NOIR trips</label>
+                    <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+                      {PAST_NOIR_TRIPS.map((trip) => (
+                        <label key={trip} className="noir-checkrow" style={{ marginBottom: 0 }}>
+                          <input
+                            type="checkbox"
+                            checked={(guestDraft.pastTrips || []).includes(trip)}
+                            onChange={(e) => {
+                              const next = e.target.checked
+                                ? [...(guestDraft.pastTrips || []), trip]
+                                : (guestDraft.pastTrips || []).filter((t) => t !== trip);
+                              setGuestDraft({ ...guestDraft, pastTrips: next });
+                            }}
+                          />
+                          <span>{trip}</span>
+                        </label>
+                      ))}
+                    </div>
                   </div>
                 </div>
 
