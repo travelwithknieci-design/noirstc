@@ -394,6 +394,8 @@ export default function NoirBookingManifest() {
   const [flightDraft, setFlightDraft] = useState(null);
   const [editingFlightGuestIds, setEditingFlightGuestIds] = useState(null);
   const [flightGuestFilter, setFlightGuestFilter] = useState("");
+  const [expandedVendorNotes, setExpandedVendorNotes] = useState(() => new Set());
+  const [expandedSponsorNotes, setExpandedSponsorNotes] = useState(() => new Set());
   const [tabConfig, setTabConfig] = useState({ order: DEFAULT_TAB_ORDER, labels: DEFAULT_TAB_LABELS });
   const [customizingTabs, setCustomizingTabs] = useState(false);
   const [showSetDemographics, setShowSetDemographics] = useState(false);
@@ -1803,6 +1805,11 @@ export default function NoirBookingManifest() {
         .noir-vendornotes {
           font-size: 12px; color: var(--muted-inverse); margin-top: 8px; border-top: 1px dashed var(--line);
           padding-top: 8px; white-space: pre-wrap; word-break: break-word; line-height: 1.5;
+        }
+        .noir-viewmorebtn {
+          display: inline; background: none; border: none; color: var(--accent-inverse); font-size: 12px;
+          font-weight: 600; cursor: pointer; padding: 0; margin-left: 4px; text-decoration: underline;
+          font-family: 'IBM Plex Sans', sans-serif;
         }
         .noir-itinerarygroup { margin-bottom: 20px; }
         .noir-itinerarylist { display: flex; flex-direction: column; gap: 8px; }
@@ -3586,7 +3593,27 @@ export default function NoirBookingManifest() {
                     {(v.photos || []).length > 0 && (
                       <div className="noir-vendordetail">{v.photos.length} photo{v.photos.length === 1 ? "" : "s"}</div>
                     )}
-                    {v.notes && <div className="noir-vendornotes">{v.notes}</div>}
+                    {v.notes && (
+                      <div className="noir-vendornotes">
+                        {expandedVendorNotes.has(v.id) || v.notes.length <= 120 ? v.notes : v.notes.slice(0, 120) + "…"}
+                        {v.notes.length > 120 && (
+                          <button
+                            type="button"
+                            className="noir-viewmorebtn"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setExpandedVendorNotes((prev) => {
+                                const next = new Set(prev);
+                                next.has(v.id) ? next.delete(v.id) : next.add(v.id);
+                                return next;
+                              });
+                            }}
+                          >
+                            {expandedVendorNotes.has(v.id) ? "View less" : "View more"}
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </button>
                 ))}
               </div>
@@ -3669,7 +3696,27 @@ export default function NoirBookingManifest() {
                     {(s.photos || []).length > 0 && (
                       <div className="noir-vendordetail">{s.photos.length} photo{s.photos.length === 1 ? "" : "s"}</div>
                     )}
-                    {s.expectedReturn && <div className="noir-vendornotes">Expects: {s.expectedReturn}</div>}
+                    {s.expectedReturn && (
+                      <div className="noir-vendornotes">
+                        Expects: {expandedSponsorNotes.has(s.id) || s.expectedReturn.length <= 120 ? s.expectedReturn : s.expectedReturn.slice(0, 120) + "…"}
+                        {s.expectedReturn.length > 120 && (
+                          <button
+                            type="button"
+                            className="noir-viewmorebtn"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setExpandedSponsorNotes((prev) => {
+                                const next = new Set(prev);
+                                next.has(s.id) ? next.delete(s.id) : next.add(s.id);
+                                return next;
+                              });
+                            }}
+                          >
+                            {expandedSponsorNotes.has(s.id) ? "View less" : "View more"}
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </button>
                 ))}
               </div>
