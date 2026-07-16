@@ -237,6 +237,7 @@ const emptyVendor = () => ({
   website: "",
   paymentTerms: "",
   notes: "",
+  photos: [],
 });
 
 const emptyItineraryEvent = () => ({
@@ -694,6 +695,24 @@ export default function NoirBookingManifest() {
         const reader = new FileReader();
         reader.onload = () => {
           setSponsorshipDraft((p) => ({ ...p, photos: [...(p.photos || []), reader.result].slice(0, 10) }));
+        };
+        reader.readAsDataURL(file);
+      });
+      return prev;
+    });
+    e.target.value = "";
+  }
+
+  function handleVendorPhotosUpload(e) {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    setVendorDraft((prev) => {
+      const room = Math.max(0, 10 - (prev.photos || []).length);
+      const toAdd = files.slice(0, room);
+      toAdd.forEach((file) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          setVendorDraft((p) => ({ ...p, photos: [...(p.photos || []), reader.result].slice(0, 10) }));
         };
         reader.readAsDataURL(file);
       });
@@ -1781,7 +1800,10 @@ export default function NoirBookingManifest() {
           color: var(--accent-inverse); border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; margin-top: 5px;
         }
         .noir-vendordetail { font-size: 12.5px; color: var(--muted-inverse); margin-top: 6px; }
-        .noir-vendornotes { font-size: 12px; color: var(--muted-inverse); margin-top: 8px; border-top: 1px dashed var(--line); padding-top: 8px; }
+        .noir-vendornotes {
+          font-size: 12px; color: var(--muted-inverse); margin-top: 8px; border-top: 1px dashed var(--line);
+          padding-top: 8px; white-space: pre-wrap; word-break: break-word; line-height: 1.5;
+        }
         .noir-itinerarygroup { margin-bottom: 20px; }
         .noir-itinerarylist { display: flex; flex-direction: column; gap: 8px; }
         .noir-itineraryevent {
@@ -3550,6 +3572,9 @@ export default function NoirBookingManifest() {
               <div className="noir-vendorgrid">
                 {vendors.map((v) => (
                   <button type="button" key={v.id} className="noir-vendorcard" onClick={() => openEditVendor(v)}>
+                    {(v.photos || []).length > 0 && (
+                      <img src={v.photos[0]} alt="" style={{ width: "100%", aspectRatio: "16/9", objectFit: "cover", borderRadius: 8, marginBottom: 8 }} />
+                    )}
                     <div className="noir-vendorname">{v.name}</div>
                     {v.category && <div className="noir-vendorcategory">{v.category}</div>}
                     <div className="noir-vendordetail">{v.contact}</div>
@@ -3558,6 +3583,9 @@ export default function NoirBookingManifest() {
                     {v.address && <div className="noir-vendordetail">{v.address}</div>}
                     {v.website && <div className="noir-vendordetail">{v.website}</div>}
                     {v.paymentTerms && <div className="noir-vendordetail">Terms: {v.paymentTerms}</div>}
+                    {(v.photos || []).length > 0 && (
+                      <div className="noir-vendordetail">{v.photos.length} photo{v.photos.length === 1 ? "" : "s"}</div>
+                    )}
                     {v.notes && <div className="noir-vendornotes">{v.notes}</div>}
                   </button>
                 ))}
@@ -4184,6 +4212,36 @@ export default function NoirBookingManifest() {
                     onChange={(e) => setVendorDraft({ ...vendorDraft, notes: e.target.value })}
                     placeholder="Rates, associated cards on file, anything worth remembering"
                   />
+                </div>
+                <div className="noir-field">
+                  <label>Photos ({(vendorDraft.photos || []).length} of 10)</label>
+                  <div className="noir-hint" style={{ marginBottom: 6 }}>
+                    For pricing charts, itineraries, or anything tabular — a screenshot preserves the formatting,
+                    pasted text into Notes doesn't.
+                  </div>
+                  {(vendorDraft.photos || []).length < 10 && (
+                    <input type="file" accept="image/*" multiple onChange={handleVendorPhotosUpload} />
+                  )}
+                  {(vendorDraft.photos || []).length > 0 && (
+                    <div className="noir-sponsorphotogrid">
+                      {vendorDraft.photos.map((photo, i) => (
+                        <div key={i} className="noir-sponsorphotothumb">
+                          <img src={photo} alt="" />
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setVendorDraft({
+                                ...vendorDraft,
+                                photos: vendorDraft.photos.filter((_, idx) => idx !== i),
+                              })
+                            }
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <div className="noir-modalactions">
                   {editingVendorId && (
