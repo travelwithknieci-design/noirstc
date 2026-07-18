@@ -896,9 +896,9 @@ export default function NoirBookingManifest() {
   }, [activeTripId]);
 
   async function saveBonusConfig(next) {
-    setBonusConfig(next);
     try {
       await storageSet("bonusconfig:" + activeTripId, JSON.stringify(next));
+      setBonusConfig(next);
       logActivity(
         commissionAuth?.token,
         [`set bonus commission to ${money(Number(next.amountPerIncrement) || 0)} per ${next.roomsPerIncrement || 0} rooms`]
