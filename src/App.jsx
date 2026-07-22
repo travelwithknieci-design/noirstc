@@ -283,6 +283,7 @@ const emptySuperlative = () => ({
   id: "sl_" + Math.random().toString(36).slice(2, 9),
   category: "",
   gift: "",
+  price: "",
 });
 
 const emptyGiftBagItem = () => ({
@@ -976,7 +977,7 @@ export default function NoirBookingManifest() {
 
   async function saveSuperlatives(next) {
     const changeMessages = diffNamedList(superlatives, next, "superlative", [
-      ["category", "Category"], ["gift", "Gift"],
+      ["category", "Category"], ["gift", "Gift"], ["price", "Price"],
     ]);
     setSuperlatives(next);
     try {
@@ -3877,22 +3878,29 @@ export default function NoirBookingManifest() {
               <div className="noir-empty">No superlatives added yet. Click "+ Add superlative" to add your first one.</div>
             ) : (
               <div className="noir-ratesgrid">
-                <div className="noir-ratesheadrow" style={{ gridTemplateColumns: "1fr 1fr" }}>
+                <div className="noir-ratesheadrow" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
                   <div>Category</div>
                   <div>Gift</div>
+                  <div>Price</div>
                 </div>
                 {superlatives.map((s) => (
                   <button
                     type="button"
                     key={s.id}
                     className="noir-ratesrow noir-ratesrowbtn"
-                    style={{ gridTemplateColumns: "1fr 1fr" }}
+                    style={{ gridTemplateColumns: "1fr 1fr 1fr" }}
                     onClick={() => openEditSuperlative(s)}
                   >
                     <div className="noir-ratesroomtype">{s.category}</div>
                     <div>{s.gift || "—"}</div>
+                    <div>{s.price ? money(Number(s.price)) : "—"}</div>
                   </button>
                 ))}
+                <div className="noir-ratesrow" style={{ gridTemplateColumns: "1fr 1fr 1fr", fontWeight: 600 }}>
+                  <div className="noir-ratesroomtype">Total</div>
+                  <div></div>
+                  <div>{money(superlatives.reduce((s, r) => s + (Number(r.price) || 0), 0))}</div>
+                </div>
               </div>
             )}
 
@@ -4641,6 +4649,7 @@ export default function NoirBookingManifest() {
               <form onSubmit={submitSuperlative}>
                 {field("Category", superlativeDraft.category, (v) => setSuperlativeDraft({ ...superlativeDraft, category: v }))}
                 {field("Gift", superlativeDraft.gift, (v) => setSuperlativeDraft({ ...superlativeDraft, gift: v }))}
+                {field("Price", superlativeDraft.price, (v) => setSuperlativeDraft({ ...superlativeDraft, price: v }), "number")}
                 <div className="noir-modalactions">
                   {editingSuperlativeId && (
                     <button
