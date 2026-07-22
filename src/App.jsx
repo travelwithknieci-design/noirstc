@@ -78,7 +78,7 @@ function diffNamedList(oldList, newList, typeLabel, fields) {
   const messages = [];
   const oldById = new Map((oldList || []).map((x) => [x.id, x]));
   const newById = new Map((newList || []).map((x) => [x.id, x]));
-  const nameOf = (x) => x.name || x.businessName || x.title || "unnamed";
+  const nameOf = (x) => x.name || x.businessName || x.title || x.category || x.item || "unnamed";
   newById.forEach((item, id) => {
     if (!oldById.has(id)) {
       messages.push(`added ${typeLabel} "${nameOf(item)}"`);
@@ -251,7 +251,7 @@ const emptyItineraryEvent = () => ({
 
 const PAST_NOIR_TRIPS = ["Cabo 2023", "Punta Cana 2024", "Antigua 2025", "St. Lucia 2026"];
 
-const DEFAULT_TAB_ORDER = ["roster", "demographics", "flights", "inventory", "commission", "rates", "activitylog", "vendors", "itinerary", "sponsorship"];
+const DEFAULT_TAB_ORDER = ["roster", "demographics", "flights", "inventory", "commission", "rates", "activitylog", "vendors", "itinerary", "sponsorship", "superlative"];
 const DEFAULT_TAB_LABELS = {
   roster: "Roster",
   demographics: "Demographics",
@@ -263,6 +263,7 @@ const DEFAULT_TAB_LABELS = {
   vendors: "Vendors",
   itinerary: "Itinerary",
   sponsorship: "Sponsorship",
+  superlative: "Gifting",
 };
 
 const emptySponsorship = () => ({
@@ -276,6 +277,19 @@ const emptySponsorship = () => ({
   expectedReturn: "",
   status: "",
   photos: [],
+});
+
+const emptySuperlative = () => ({
+  id: "sl_" + Math.random().toString(36).slice(2, 9),
+  category: "",
+  gift: "",
+});
+
+const emptyGiftBagItem = () => ({
+  id: "gb_" + Math.random().toString(36).slice(2, 9),
+  item: "",
+  quantity: "",
+  price: "",
 });
 
 const emptyGuest = () => ({
@@ -411,6 +425,14 @@ export default function NoirBookingManifest() {
   const [showSponsorshipForm, setShowSponsorshipForm] = useState(false);
   const [sponsorshipDraft, setSponsorshipDraft] = useState(null);
   const [editingSponsorshipId, setEditingSponsorshipId] = useState(null);
+  const [superlatives, setSuperlatives] = useState(null);
+  const [showSuperlativeForm, setShowSuperlativeForm] = useState(false);
+  const [superlativeDraft, setSuperlativeDraft] = useState(null);
+  const [editingSuperlativeId, setEditingSuperlativeId] = useState(null);
+  const [giftBagItems, setGiftBagItems] = useState(null);
+  const [showGiftBagForm, setShowGiftBagForm] = useState(false);
+  const [giftBagDraft, setGiftBagDraft] = useState(null);
+  const [editingGiftBagId, setEditingGiftBagId] = useState(null);
 
   useEffect(() => {
     try {
@@ -936,6 +958,120 @@ export default function NoirBookingManifest() {
   async function deleteSponsorship(s) {
     const next = (sponsorships || []).filter((r) => r.id !== s.id);
     await saveSponsorships(next);
+  }
+
+  useEffect(() => {
+    if (!activeTripId) return;
+    (async () => {
+      let list = [];
+      try {
+        const val = await storageGet("superlatives:" + activeTripId);
+        list = val ? JSON.parse(val) : [];
+      } catch {
+        list = [];
+      }
+      setSuperlatives(list);
+    })();
+  }, [activeTripId]);
+
+  async function saveSuperlatives(next) {
+    const changeMessages = diffNamedList(superlatives, next, "superlative", [
+      ["category", "Category"], ["gift", "Gift"],
+    ]);
+    setSuperlatives(next);
+    try {
+      await storageSet("superlatives:" + activeTripId, JSON.stringify(next));
+      logActivity(commissionAuth?.token, changeMessages);
+    } catch {
+      // Read-only session — already showing the data above, it just won't persist.
+    }
+  }
+
+  function openAddSuperlative() {
+    setEditingSuperlativeId(null);
+    setSuperlativeDraft(emptySuperlative());
+    setShowSuperlativeForm(true);
+  }
+
+  function openEditSuperlative(s) {
+    setEditingSuperlativeId(s.id);
+    setSuperlativeDraft({ ...s });
+    setShowSuperlativeForm(true);
+  }
+
+  async function submitSuperlative(e) {
+    e.preventDefault();
+    if (!superlativeDraft.category.trim()) return;
+    let next;
+    if (editingSuperlativeId) {
+      next = superlatives.map((s) => (s.id === editingSuperlativeId ? superlativeDraft : s));
+    } else {
+      next = [...(superlatives || []), superlativeDraft];
+    }
+    await saveSuperlatives(next);
+    setShowSuperlativeForm(false);
+  }
+
+  async function deleteSuperlative(s) {
+    const next = (superlatives || []).filter((r) => r.id !== s.id);
+    await saveSuperlatives(next);
+  }
+
+  useEffect(() => {
+    if (!activeTripId) return;
+    (async () => {
+      let list = [];
+      try {
+        const val = await storageGet("giftbagitems:" + activeTripId);
+        list = val ? JSON.parse(val) : [];
+      } catch {
+        list = [];
+      }
+      setGiftBagItems(list);
+    })();
+  }, [activeTripId]);
+
+  async function saveGiftBagItems(next) {
+    const changeMessages = diffNamedList(giftBagItems, next, "gift bag item", [
+      ["item", "Item"], ["quantity", "Quantity"], ["price", "Price"],
+    ]);
+    setGiftBagItems(next);
+    try {
+      await storageSet("giftbagitems:" + activeTripId, JSON.stringify(next));
+      logActivity(commissionAuth?.token, changeMessages);
+    } catch {
+      // Read-only session — already showing the data above, it just won't persist.
+    }
+  }
+
+  function openAddGiftBagItem() {
+    setEditingGiftBagId(null);
+    setGiftBagDraft(emptyGiftBagItem());
+    setShowGiftBagForm(true);
+  }
+
+  function openEditGiftBagItem(g) {
+    setEditingGiftBagId(g.id);
+    setGiftBagDraft({ ...g });
+    setShowGiftBagForm(true);
+  }
+
+  async function submitGiftBagItem(e) {
+    e.preventDefault();
+    if (!giftBagDraft.item.trim()) return;
+    let next;
+    if (editingGiftBagId) {
+      next = giftBagItems.map((g) => (g.id === editingGiftBagId ? giftBagDraft : g));
+    } else {
+      next = [...(giftBagItems || []), giftBagDraft];
+    }
+    await saveGiftBagItems(next);
+    setShowGiftBagForm(false);
+  }
+
+  async function deleteGiftBagItem(g) {
+    const next = (giftBagItems || []).filter((r) => r.id !== g.id);
+    await saveGiftBagItems(next);
   }
 
   function syncRoomFinancials(list) {
@@ -2209,6 +2345,13 @@ export default function NoirBookingManifest() {
                     onClick={() => setActivePage("sponsorship")}
                   >
                     {tabConfig.labels.sponsorship}
+                  </button>
+                  <button
+                    style={{ order: tabConfig.order.indexOf("superlative") }}
+                    className={"noir-subnavitem" + (activePage === "superlative" ? " active" : "")}
+                    onClick={() => setActivePage("superlative")}
+                  >
+                    {tabConfig.labels.superlative}
                   </button>
                 </div>
               )}
@@ -3724,6 +3867,81 @@ export default function NoirBookingManifest() {
           </div>
         )}
 
+        {activePage === "superlative" && (
+          <div className="noir-demopage">
+            <div className="noir-header" style={{ marginBottom: 18 }}>
+              <div className="noir-blocklabel" style={{ marginBottom: 0 }}>Superlatives</div>
+              <button className="noir-btn" onClick={openAddSuperlative}>+ Add superlative</button>
+            </div>
+            {!superlatives || superlatives.length === 0 ? (
+              <div className="noir-empty">No superlatives added yet. Click "+ Add superlative" to add your first one.</div>
+            ) : (
+              <div className="noir-ratesgrid">
+                <div className="noir-ratesheadrow" style={{ gridTemplateColumns: "1fr 1fr" }}>
+                  <div>Category</div>
+                  <div>Gift</div>
+                </div>
+                {superlatives.map((s) => (
+                  <button
+                    type="button"
+                    key={s.id}
+                    className="noir-ratesrow noir-ratesrowbtn"
+                    style={{ gridTemplateColumns: "1fr 1fr" }}
+                    onClick={() => openEditSuperlative(s)}
+                  >
+                    <div className="noir-ratesroomtype">{s.category}</div>
+                    <div>{s.gift || "—"}</div>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="noir-header" style={{ marginTop: 28, marginBottom: 18 }}>
+              <div className="noir-blocklabel" style={{ marginBottom: 0 }}>Gift Bag Contents</div>
+              <button className="noir-btn" onClick={openAddGiftBagItem}>+ Add item</button>
+            </div>
+            {!giftBagItems || giftBagItems.length === 0 ? (
+              <div className="noir-empty">No gift bag items added yet. Click "+ Add item" to add your first one.</div>
+            ) : (
+              <div className="noir-ratesgrid">
+                <div className="noir-ratesheadrow" style={{ gridTemplateColumns: "1.4fr 1fr 1fr 1fr" }}>
+                  <div>Item</div>
+                  <div>Quantity</div>
+                  <div>Price</div>
+                  <div>Total</div>
+                </div>
+                {giftBagItems.map((g) => {
+                  const lineTotal = (Number(g.quantity) || 0) * (Number(g.price) || 0);
+                  return (
+                    <button
+                      type="button"
+                      key={g.id}
+                      className="noir-ratesrow noir-ratesrowbtn"
+                      style={{ gridTemplateColumns: "1.4fr 1fr 1fr 1fr" }}
+                      onClick={() => openEditGiftBagItem(g)}
+                    >
+                      <div className="noir-ratesroomtype">{g.item}</div>
+                      <div>{g.quantity || "—"}</div>
+                      <div>{g.price ? money(Number(g.price)) : "—"}</div>
+                      <div>{lineTotal > 0 ? money(lineTotal) : "—"}</div>
+                    </button>
+                  );
+                })}
+                <div className="noir-ratesrow" style={{ gridTemplateColumns: "1.4fr 1fr 1fr 1fr", fontWeight: 600 }}>
+                  <div className="noir-ratesroomtype">Total</div>
+                  <div></div>
+                  <div></div>
+                  <div>
+                    {money(
+                      giftBagItems.reduce((s, g) => s + (Number(g.quantity) || 0) * (Number(g.price) || 0), 0)
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {activePage === "roster" && contractStats && (
               <>
                 <div className="noir-stats noir-stats-primary">
@@ -4410,6 +4628,59 @@ export default function NoirBookingManifest() {
                   )}
                   <button type="button" className="noir-btn ghost" onClick={() => setShowSponsorshipForm(false)}>Close</button>
                   <button type="submit" className="noir-btn">{editingSponsorshipId ? "Save changes" : "Add sponsorship"}</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {showSuperlativeForm && superlativeDraft && (
+          <div className="noir-overlay">
+            <div className="noir-modal" style={{ width: 380 }}>
+              <h3>{editingSuperlativeId ? "Edit superlative" : "Add superlative"}</h3>
+              <form onSubmit={submitSuperlative}>
+                {field("Category", superlativeDraft.category, (v) => setSuperlativeDraft({ ...superlativeDraft, category: v }))}
+                {field("Gift", superlativeDraft.gift, (v) => setSuperlativeDraft({ ...superlativeDraft, gift: v }))}
+                <div className="noir-modalactions">
+                  {editingSuperlativeId && (
+                    <button
+                      type="button"
+                      className="noir-btn ghost"
+                      style={{ marginRight: "auto" }}
+                      onClick={async () => { await deleteSuperlative(superlativeDraft); setShowSuperlativeForm(false); }}
+                    >
+                      Delete
+                    </button>
+                  )}
+                  <button type="button" className="noir-btn ghost" onClick={() => setShowSuperlativeForm(false)}>Close</button>
+                  <button type="submit" className="noir-btn">{editingSuperlativeId ? "Save changes" : "Add superlative"}</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {showGiftBagForm && giftBagDraft && (
+          <div className="noir-overlay">
+            <div className="noir-modal" style={{ width: 380 }}>
+              <h3>{editingGiftBagId ? "Edit gift bag item" : "Add gift bag item"}</h3>
+              <form onSubmit={submitGiftBagItem}>
+                {field("Item", giftBagDraft.item, (v) => setGiftBagDraft({ ...giftBagDraft, item: v }))}
+                {field("Quantity", giftBagDraft.quantity, (v) => setGiftBagDraft({ ...giftBagDraft, quantity: v }))}
+                {field("Price per item", giftBagDraft.price, (v) => setGiftBagDraft({ ...giftBagDraft, price: v }), "number")}
+                <div className="noir-modalactions">
+                  {editingGiftBagId && (
+                    <button
+                      type="button"
+                      className="noir-btn ghost"
+                      style={{ marginRight: "auto" }}
+                      onClick={async () => { await deleteGiftBagItem(giftBagDraft); setShowGiftBagForm(false); }}
+                    >
+                      Delete
+                    </button>
+                  )}
+                  <button type="button" className="noir-btn ghost" onClick={() => setShowGiftBagForm(false)}>Close</button>
+                  <button type="submit" className="noir-btn">{editingGiftBagId ? "Save changes" : "Add item"}</button>
                 </div>
               </form>
             </div>
