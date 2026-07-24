@@ -39,7 +39,7 @@ function fmtLogVal(v) {
 
 const GUEST_TRACKED_FIELDS = [
   ["name", "Name"], ["gender", "Gender"], ["travelStatus", "Travel status"], ["ageRange", "Age range"],
-  ["guestStatus", "New/Returning"], ["state", "State"], ["pastTrips", "Past NOIR trips"], ["nights", "Nights"], ["instagram", "Instagram"], ["email", "Email"],
+  ["guestStatus", "New/Returning"], ["state", "State"], ["pastTrips", "Past NOIR trips"], ["possibleAddition", "Possible additional guest"], ["nights", "Nights"], ["instagram", "Instagram"], ["email", "Email"],
   ["phone", "Phone"], ["arrivalDate", "Arrival date"], ["arrivalTime", "Arrival time"],
   ["airline", "Airline"], ["flightNumber", "Flight number"], ["roomType", "Room type"], ["bedding", "Bedding"],
   ["dateBooked", "Date booked"], ["bookingNumber", "Booking number"], ["autoPay", "Auto pay"],
@@ -284,6 +284,7 @@ const emptySuperlative = () => ({
   category: "",
   gift: "",
   price: "",
+  link: "",
 });
 
 const emptyGiftBagItem = () => ({
@@ -291,6 +292,15 @@ const emptyGiftBagItem = () => ({
   item: "",
   quantity: "",
   price: "",
+  link: "",
+});
+
+const emptyOtherItem = () => ({
+  id: "ot_" + Math.random().toString(36).slice(2, 9),
+  item: "",
+  quantity: "",
+  price: "",
+  link: "",
 });
 
 const emptyGuest = () => ({
@@ -303,6 +313,7 @@ const emptyGuest = () => ({
   guestStatus: "",
   state: "",
   pastTrips: [],
+  possibleAddition: false,
   nights: "",
   instagram: "",
   email: "",
@@ -375,6 +386,7 @@ export default function NoirBookingManifest() {
   const [showMoreStats, setShowMoreStats] = useState(false);
   const [showRevenueBreakdown, setShowRevenueBreakdown] = useState(false);
   const [showReferralBreakdown, setShowReferralBreakdown] = useState(false);
+  const [showPossibleAdditionBreakdown, setShowPossibleAdditionBreakdown] = useState(false);
   const [addonOpenKey, setAddonOpenKey] = useState(null);
   const [arrivalOpenDate, setArrivalOpenDate] = useState(null);
   const [showAutoPayBreakdown, setShowAutoPayBreakdown] = useState(false);
@@ -434,6 +446,10 @@ export default function NoirBookingManifest() {
   const [showGiftBagForm, setShowGiftBagForm] = useState(false);
   const [giftBagDraft, setGiftBagDraft] = useState(null);
   const [editingGiftBagId, setEditingGiftBagId] = useState(null);
+  const [otherItems, setOtherItems] = useState(null);
+  const [showOtherForm, setShowOtherForm] = useState(false);
+  const [otherDraft, setOtherDraft] = useState(null);
+  const [editingOtherId, setEditingOtherId] = useState(null);
 
   useEffect(() => {
     try {
@@ -977,7 +993,7 @@ export default function NoirBookingManifest() {
 
   async function saveSuperlatives(next) {
     const changeMessages = diffNamedList(superlatives, next, "superlative", [
-      ["category", "Category"], ["gift", "Gift"], ["price", "Price"],
+      ["category", "Category"], ["gift", "Gift"], ["price", "Price"], ["link", "Link"],
     ]);
     setSuperlatives(next);
     try {
@@ -1034,7 +1050,7 @@ export default function NoirBookingManifest() {
 
   async function saveGiftBagItems(next) {
     const changeMessages = diffNamedList(giftBagItems, next, "gift bag item", [
-      ["item", "Item"], ["quantity", "Quantity"], ["price", "Price"],
+      ["item", "Item"], ["quantity", "Quantity"], ["price", "Price"], ["link", "Link"],
     ]);
     setGiftBagItems(next);
     try {
@@ -1073,6 +1089,63 @@ export default function NoirBookingManifest() {
   async function deleteGiftBagItem(g) {
     const next = (giftBagItems || []).filter((r) => r.id !== g.id);
     await saveGiftBagItems(next);
+  }
+
+  useEffect(() => {
+    if (!activeTripId) return;
+    (async () => {
+      let list = [];
+      try {
+        const val = await storageGet("otheritems:" + activeTripId);
+        list = val ? JSON.parse(val) : [];
+      } catch {
+        list = [];
+      }
+      setOtherItems(list);
+    })();
+  }, [activeTripId]);
+
+  async function saveOtherItems(next) {
+    const changeMessages = diffNamedList(otherItems, next, "trip enhancement item", [
+      ["item", "Item"], ["quantity", "Quantity"], ["price", "Price"], ["link", "Link"],
+    ]);
+    setOtherItems(next);
+    try {
+      await storageSet("otheritems:" + activeTripId, JSON.stringify(next));
+      logActivity(commissionAuth?.token, changeMessages);
+    } catch {
+      // Read-only session — already showing the data above, it just won't persist.
+    }
+  }
+
+  function openAddOtherItem() {
+    setEditingOtherId(null);
+    setOtherDraft(emptyOtherItem());
+    setShowOtherForm(true);
+  }
+
+  function openEditOtherItem(o) {
+    setEditingOtherId(o.id);
+    setOtherDraft({ ...o });
+    setShowOtherForm(true);
+  }
+
+  async function submitOtherItem(e) {
+    e.preventDefault();
+    if (!otherDraft.item.trim()) return;
+    let next;
+    if (editingOtherId) {
+      next = otherItems.map((o) => (o.id === editingOtherId ? otherDraft : o));
+    } else {
+      next = [...(otherItems || []), otherDraft];
+    }
+    await saveOtherItems(next);
+    setShowOtherForm(false);
+  }
+
+  async function deleteOtherItem(o) {
+    const next = (otherItems || []).filter((r) => r.id !== o.id);
+    await saveOtherItems(next);
   }
 
   function syncRoomFinancials(list) {
@@ -1259,6 +1332,11 @@ export default function NoirBookingManifest() {
         occupancyNames.other.push(label);
       }
     });
+    const possibleAdditionGuests = active.filter((g) => g.possibleAddition);
+    const possibleAdditionCount = possibleAdditionGuests.length;
+    const possibleAdditionNames = possibleAdditionGuests.map((g) => g.name);
+    const maxPotentialHeadcount = active.length + possibleAdditionCount;
+
     const pastTripMap = new Map();
     PAST_NOIR_TRIPS.forEach((trip) => pastTripMap.set(trip, []));
     let repeatGuestCount = 0;
@@ -1485,6 +1563,9 @@ export default function NoirBookingManifest() {
       repeatGuestCount,
       repeatGuestNames,
       pastTripCounts,
+      possibleAdditionCount,
+      possibleAdditionNames,
+      maxPotentialHeadcount,
       guestStatusCounts,
       couplesCount,
       couplesNames,
@@ -1982,6 +2063,7 @@ export default function NoirBookingManifest() {
         }
         .noir-ratesrow { border-top: 1px dashed var(--line); color: var(--text-inverse); font-family: 'IBM Plex Mono', monospace; font-size: 13px; }
         .noir-ratesroomtype { font-family: 'IBM Plex Sans', sans-serif; font-weight: 500; }
+        .noir-ratesrow a { color: var(--accent-inverse); text-decoration: underline; font-size: 12px; font-family: 'IBM Plex Sans', sans-serif; }
         .noir-ratesrowbtn {
           width: 100%; text-align: left; background: none; border: none; border-top: 1px dashed var(--line);
           cursor: pointer; color: var(--text-inverse); font-family: 'IBM Plex Mono', monospace; font-size: 13px;
@@ -3878,28 +3960,36 @@ export default function NoirBookingManifest() {
               <div className="noir-empty">No superlatives added yet. Click "+ Add superlative" to add your first one.</div>
             ) : (
               <div className="noir-ratesgrid">
-                <div className="noir-ratesheadrow" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
+                <div className="noir-ratesheadrow" style={{ gridTemplateColumns: "1fr 1fr 1fr 0.6fr" }}>
                   <div>Category</div>
                   <div>Gift</div>
                   <div>Price</div>
+                  <div>Link</div>
                 </div>
                 {superlatives.map((s) => (
-                  <button
-                    type="button"
+                  <div
                     key={s.id}
                     className="noir-ratesrow noir-ratesrowbtn"
-                    style={{ gridTemplateColumns: "1fr 1fr 1fr" }}
+                    style={{ gridTemplateColumns: "1fr 1fr 1fr 0.6fr", cursor: "pointer" }}
                     onClick={() => openEditSuperlative(s)}
                   >
                     <div className="noir-ratesroomtype">{s.category}</div>
                     <div>{s.gift || "—"}</div>
                     <div>{s.price ? money(Number(s.price)) : "—"}</div>
-                  </button>
+                    <div>
+                      {s.link && (
+                        <a href={s.link} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}>
+                          🔗 Link
+                        </a>
+                      )}
+                    </div>
+                  </div>
                 ))}
-                <div className="noir-ratesrow" style={{ gridTemplateColumns: "1fr 1fr 1fr", fontWeight: 600 }}>
+                <div className="noir-ratesrow" style={{ gridTemplateColumns: "1fr 1fr 1fr 0.6fr", fontWeight: 600 }}>
                   <div className="noir-ratesroomtype">Total</div>
                   <div></div>
                   <div>{money(superlatives.reduce((s, r) => s + (Number(r.price) || 0), 0))}</div>
+                  <div></div>
                 </div>
               </div>
             )}
@@ -3912,30 +4002,37 @@ export default function NoirBookingManifest() {
               <div className="noir-empty">No gift bag items added yet. Click "+ Add item" to add your first one.</div>
             ) : (
               <div className="noir-ratesgrid">
-                <div className="noir-ratesheadrow" style={{ gridTemplateColumns: "1.4fr 1fr 1fr 1fr" }}>
+                <div className="noir-ratesheadrow" style={{ gridTemplateColumns: "1.2fr 0.8fr 0.8fr 0.8fr 0.6fr" }}>
                   <div>Item</div>
                   <div>Quantity</div>
                   <div>Price</div>
                   <div>Total</div>
+                  <div>Link</div>
                 </div>
                 {giftBagItems.map((g) => {
                   const lineTotal = (Number(g.quantity) || 0) * (Number(g.price) || 0);
                   return (
-                    <button
-                      type="button"
+                    <div
                       key={g.id}
                       className="noir-ratesrow noir-ratesrowbtn"
-                      style={{ gridTemplateColumns: "1.4fr 1fr 1fr 1fr" }}
+                      style={{ gridTemplateColumns: "1.2fr 0.8fr 0.8fr 0.8fr 0.6fr", cursor: "pointer" }}
                       onClick={() => openEditGiftBagItem(g)}
                     >
                       <div className="noir-ratesroomtype">{g.item}</div>
                       <div>{g.quantity || "—"}</div>
                       <div>{g.price ? money(Number(g.price)) : "—"}</div>
                       <div>{lineTotal > 0 ? money(lineTotal) : "—"}</div>
-                    </button>
+                      <div>
+                        {g.link && (
+                          <a href={g.link} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}>
+                            🔗 Link
+                          </a>
+                        )}
+                      </div>
+                    </div>
                   );
                 })}
-                <div className="noir-ratesrow" style={{ gridTemplateColumns: "1.4fr 1fr 1fr 1fr", fontWeight: 600 }}>
+                <div className="noir-ratesrow" style={{ gridTemplateColumns: "1.2fr 0.8fr 0.8fr 0.8fr 0.6fr", fontWeight: 600 }}>
                   <div className="noir-ratesroomtype">Total</div>
                   <div></div>
                   <div></div>
@@ -3944,6 +4041,59 @@ export default function NoirBookingManifest() {
                       giftBagItems.reduce((s, g) => s + (Number(g.quantity) || 0) * (Number(g.price) || 0), 0)
                     )}
                   </div>
+                  <div></div>
+                </div>
+              </div>
+            )}
+
+            <div className="noir-header" style={{ marginTop: 28, marginBottom: 18 }}>
+              <div className="noir-blocklabel" style={{ marginBottom: 0 }}>Other</div>
+              <button className="noir-btn" onClick={openAddOtherItem}>+ Add item</button>
+            </div>
+            {!otherItems || otherItems.length === 0 ? (
+              <div className="noir-empty">No other items added yet. Click "+ Add item" to add your first one.</div>
+            ) : (
+              <div className="noir-ratesgrid">
+                <div className="noir-ratesheadrow" style={{ gridTemplateColumns: "1.2fr 0.8fr 0.8fr 0.8fr 0.6fr" }}>
+                  <div>Item</div>
+                  <div>Quantity</div>
+                  <div>Price</div>
+                  <div>Total</div>
+                  <div>Link</div>
+                </div>
+                {otherItems.map((o) => {
+                  const lineTotal = (Number(o.quantity) || 0) * (Number(o.price) || 0);
+                  return (
+                    <div
+                      key={o.id}
+                      className="noir-ratesrow noir-ratesrowbtn"
+                      style={{ gridTemplateColumns: "1.2fr 0.8fr 0.8fr 0.8fr 0.6fr", cursor: "pointer" }}
+                      onClick={() => openEditOtherItem(o)}
+                    >
+                      <div className="noir-ratesroomtype">{o.item}</div>
+                      <div>{o.quantity || "—"}</div>
+                      <div>{o.price ? money(Number(o.price)) : "—"}</div>
+                      <div>{lineTotal > 0 ? money(lineTotal) : "—"}</div>
+                      <div>
+                        {o.link && (
+                          <a href={o.link} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}>
+                            🔗 Link
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+                <div className="noir-ratesrow" style={{ gridTemplateColumns: "1.2fr 0.8fr 0.8fr 0.8fr 0.6fr", fontWeight: 600 }}>
+                  <div className="noir-ratesroomtype">Total</div>
+                  <div></div>
+                  <div></div>
+                  <div>
+                    {money(
+                      otherItems.reduce((s, o) => s + (Number(o.quantity) || 0) * (Number(o.price) || 0), 0)
+                    )}
+                  </div>
+                  <div></div>
                 </div>
               </div>
             )}
@@ -3996,7 +4146,7 @@ export default function NoirBookingManifest() {
                 </div>
 
                 {showMoreStats && (
-                  <div className="noir-stats noir-stats-secondary" style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>
+                  <div className="noir-stats noir-stats-secondary" style={{ gridTemplateColumns: "repeat(6, 1fr)" }}>
                     <button
                       type="button"
                       className={"noir-statcard noir-statcard-clickable" + (showCancelledBreakdown ? " active" : "")}
@@ -4037,6 +4187,34 @@ export default function NoirBookingManifest() {
                       <div className="noir-statlabel">Referrals</div>
                       <div className="noir-statval">{contractStats.referralCount}</div>
                     </button>
+                    <button
+                      type="button"
+                      className={"noir-statcard noir-statcard-clickable" + (showPossibleAdditionBreakdown ? " active" : "")}
+                      onClick={() => setShowPossibleAdditionBreakdown((v) => !v)}
+                    >
+                      <div className="noir-statlabel">Possible additions</div>
+                      <div className="noir-statval">{contractStats.possibleAdditionCount}</div>
+                    </button>
+                  </div>
+                )}
+
+                {contractStats && showMoreStats && showPossibleAdditionBreakdown && (
+                  <div className="noir-agentblock">
+                    <div className="noir-blocklabel">Possible additions</div>
+                    <div className="noir-hint" style={{ marginBottom: 10 }}>
+                      Currently solo bookings flagged as "may add a roommate later." If all of them do,
+                      max potential headcount for this contract would be {contractStats.maxPotentialHeadcount}
+                      (currently {contractStats.count}).
+                    </div>
+                    {contractStats.possibleAdditionNames.length === 0 ? (
+                      <div className="noir-empty">No one flagged yet.</div>
+                    ) : (
+                      <div className="noir-referredlist" style={{ borderTop: "none", padding: 0 }}>
+                        {contractStats.possibleAdditionNames.map((name) => (
+                          <div key={name} className="noir-referreditem">{name}</div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -4650,6 +4828,7 @@ export default function NoirBookingManifest() {
                 {field("Category", superlativeDraft.category, (v) => setSuperlativeDraft({ ...superlativeDraft, category: v }))}
                 {field("Gift", superlativeDraft.gift, (v) => setSuperlativeDraft({ ...superlativeDraft, gift: v }))}
                 {field("Price", superlativeDraft.price, (v) => setSuperlativeDraft({ ...superlativeDraft, price: v }), "number")}
+                {field("Link", superlativeDraft.link, (v) => setSuperlativeDraft({ ...superlativeDraft, link: v }))}
                 <div className="noir-modalactions">
                   {editingSuperlativeId && (
                     <button
@@ -4677,6 +4856,7 @@ export default function NoirBookingManifest() {
                 {field("Item", giftBagDraft.item, (v) => setGiftBagDraft({ ...giftBagDraft, item: v }))}
                 {field("Quantity", giftBagDraft.quantity, (v) => setGiftBagDraft({ ...giftBagDraft, quantity: v }))}
                 {field("Price per item", giftBagDraft.price, (v) => setGiftBagDraft({ ...giftBagDraft, price: v }), "number")}
+                {field("Link", giftBagDraft.link, (v) => setGiftBagDraft({ ...giftBagDraft, link: v }))}
                 <div className="noir-modalactions">
                   {editingGiftBagId && (
                     <button
@@ -4690,6 +4870,34 @@ export default function NoirBookingManifest() {
                   )}
                   <button type="button" className="noir-btn ghost" onClick={() => setShowGiftBagForm(false)}>Close</button>
                   <button type="submit" className="noir-btn">{editingGiftBagId ? "Save changes" : "Add item"}</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {showOtherForm && otherDraft && (
+          <div className="noir-overlay">
+            <div className="noir-modal" style={{ width: 380 }}>
+              <h3>{editingOtherId ? "Edit item" : "Add item"}</h3>
+              <form onSubmit={submitOtherItem}>
+                {field("Item", otherDraft.item, (v) => setOtherDraft({ ...otherDraft, item: v }))}
+                {field("Quantity", otherDraft.quantity, (v) => setOtherDraft({ ...otherDraft, quantity: v }))}
+                {field("Price per item", otherDraft.price, (v) => setOtherDraft({ ...otherDraft, price: v }), "number")}
+                {field("Link", otherDraft.link, (v) => setOtherDraft({ ...otherDraft, link: v }))}
+                <div className="noir-modalactions">
+                  {editingOtherId && (
+                    <button
+                      type="button"
+                      className="noir-btn ghost"
+                      style={{ marginRight: "auto" }}
+                      onClick={async () => { await deleteOtherItem(otherDraft); setShowOtherForm(false); }}
+                    >
+                      Delete
+                    </button>
+                  )}
+                  <button type="button" className="noir-btn ghost" onClick={() => setShowOtherForm(false)}>Close</button>
+                  <button type="submit" className="noir-btn">{editingOtherId ? "Save changes" : "Add item"}</button>
                 </div>
               </form>
             </div>
@@ -4934,6 +5142,14 @@ export default function NoirBookingManifest() {
                       <input type="checkbox" checked={!!guestDraft.primaryTraveler} onChange={(e) => setGuestDraft({ ...guestDraft, primaryTraveler: e.target.checked })} />
                       <label>Primary traveler for this room</label>
                     </div>
+                  </div>
+                  <div className="noir-checkrow" style={{ marginTop: 10 }}>
+                    <input
+                      type="checkbox"
+                      checked={!!guestDraft.possibleAddition}
+                      onChange={(e) => setGuestDraft({ ...guestDraft, possibleAddition: e.target.checked })}
+                    />
+                    <label>May add a roommate to this booking later (currently solo)</label>
                   </div>
                   <div className="noir-hint">
                     Give both roommates the same Room group name to link them. If you type one and their roommate
