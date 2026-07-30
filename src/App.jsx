@@ -1317,7 +1317,9 @@ export default function NoirBookingManifest() {
     const occupancyCounts = { single: 0, double: 0, triple: 0, other: 0 };
     const occupancyNames = { single: [], double: [], triple: [], other: [] };
     roomMap.forEach((guestsInRoom) => {
-      const label = guestsInRoom.map((g) => g.name).join(" & ");
+      const names = guestsInRoom.map((g) => g.name).join(" & ");
+      const roomType = guestsInRoom[0]?.roomType;
+      const label = roomType ? `${names} — ${roomType}` : names;
       if (guestsInRoom.length === 1) {
         occupancyCounts.single += 1;
         occupancyNames.single.push(label);
