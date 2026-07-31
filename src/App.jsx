@@ -1,3 +1,4 @@
+
 import { useState, useEffect, useMemo } from "react";
 import { PieChart, Pie, Cell, Legend, Tooltip, ResponsiveContainer } from "recharts";
 import * as XLSX from "xlsx";
@@ -1169,14 +1170,16 @@ export default function NoirBookingManifest() {
       const hasRate = guestsInRoom.some((g) => Number(g.price) > 0);
       const funjet = hasRate && nights ? getFunjetRate(nights, occupancyKey, roomType, primaryGuest?.contract) : null;
       const manualCommission = Number(primaryGuest?.commission) || 0;
+      const manualNetBalance = Number(primaryGuest?.netBalance) || 0;
       const commission = primaryGuest?.noCommission ? 0 : funjet ? funjet.commission : manualCommission;
+      const netBalanceValue = funjet ? funjet.net : manualNetBalance;
       const primaryAgent = getRoomPrimaryAgent(guestsInRoom);
       const insuredCost = guestsInRoom.reduce((s, g) => s + (g.insurance ? INSURANCE_COST : 0), 0);
       roomInfo.set(key, {
         price,
         commission,
         primaryAgent,
-        funjetNet: funjet ? funjet.net : null,
+        netBalanceValue,
         autoMatched: !!funjet,
         insuredCost,
       });
@@ -1188,12 +1191,8 @@ export default function NoirBookingManifest() {
       if (!info) return g;
       let tjkcDeduction = g.tjkcDeduction;
       let netCommission = g.netCommission;
-      let netBalance = g.netBalance;
-      let vaxBalance = g.vaxBalance;
-      if (info.funjetNet !== null) {
-        netBalance = info.funjetNet;
-        vaxBalance = Math.round((info.funjetNet + info.insuredCost + info.commission) * 100) / 100;
-      }
+      const netBalance = info.netBalanceValue;
+      const vaxBalance = Math.round((info.netBalanceValue + info.insuredCost + info.commission) * 100) / 100;
       if (info.primaryAgent === "Adrienne") {
         // Split unconfirmed — leave whatever's there untouched rather than guessing.
       } else if (!info.primaryAgent) {
@@ -1205,8 +1204,7 @@ export default function NoirBookingManifest() {
         tjkcDeduction = Math.round(info.commission * (1 - rate) * 100) / 100;
         netCommission = Math.round(info.commission * rate * 100) / 100;
       }
-      const difference =
-        info.funjetNet !== null ? Math.round((info.price - vaxBalance) * 100) / 100 : g.difference;
+      const difference = Math.round((info.price - vaxBalance) * 100) / 100;
       return { ...g, tjBalance: info.price, commission: info.commission, tjkcDeduction, netCommission, netBalance, vaxBalance, difference };
     });
   }
@@ -5301,7 +5299,7 @@ export default function NoirBookingManifest() {
                   <div className="noir-grid4">
                     <div className="noir-field">
                       <label>Net balance</label>
-                      <input type="text" readOnly value={money((() => {
+                      {(() => {
                         const groupKey = (guestDraft.roomGroup || "").trim().toLowerCase();
                         let occupancyCount = 1;
                         let roommates = [];
@@ -5314,12 +5312,22 @@ export default function NoirBookingManifest() {
                         const occKey = occupancyCount === 1 ? "solo" : occupancyCount === 2 ? "double" : null;
                         const roomHasRate = (Number(guestDraft.price) > 0) || roommates.some((g) => Number(g.price) > 0);
                         const funjet = roomHasRate && guestDraft.nights ? getFunjetRate(guestDraft.nights, occKey, guestDraft.roomType, guestDraft.contract) : null;
-                        return funjet ? funjet.net : Number(guestDraft.netBalance) || 0;
-                      })())} style={{ opacity: 0.8 }} />
+                        if (funjet) {
+                          return <input type="text" readOnly value={money(funjet.net)} style={{ opacity: 0.8 }} />;
+                        }
+                        return (
+                          <input
+                            type="number"
+                            value={guestDraft.netBalance}
+                            onChange={(e) => setGuestDraft({ ...guestDraft, netBalance: e.target.value })}
+                            placeholder="No rate on file — enter manually"
+                          />
+                        );
+                      })()}
                     </div>
                     <div className="noir-field">
                       <label>Commission</label>
-                      <input type="text" readOnly value={money((() => {
+                      {(() => {
                         const groupKey = (guestDraft.roomGroup || "").trim().toLowerCase();
                         let occupancyCount = 1;
                         if (groupKey && roster) {
@@ -5334,12 +5342,21 @@ export default function NoirBookingManifest() {
                           : [];
                         const roomHasRate = (Number(guestDraft.price) > 0) || roommatesForRate.some((g) => Number(g.price) > 0);
                         const funjet = roomHasRate && guestDraft.nights ? getFunjetRate(guestDraft.nights, occKey, guestDraft.roomType, guestDraft.contract) : null;
-                        if (guestDraft.noCommission) return 0;
-                        if (funjet) return funjet.commission;
-                        if (!groupKey || !roster) return Number(guestDraft.commission) || 0;
-                        const existing = roommatesForRate.find((g) => Number(g.commission) > 0);
-                        return existing ? Number(existing.commission) : (Number(guestDraft.commission) || 0);
-                      })())} style={{ opacity: 0.8 }} />
+                        if (guestDraft.noCommission) {
+                          return <input type="text" readOnly value={money(0)} style={{ opacity: 0.8 }} />;
+                        }
+                        if (funjet) {
+                          return <input type="text" readOnly value={money(funjet.commission)} style={{ opacity: 0.8 }} />;
+                        }
+                        return (
+                          <input
+                            type="number"
+                            value={guestDraft.commission}
+                            onChange={(e) => setGuestDraft({ ...guestDraft, commission: e.target.value })}
+                            placeholder="No rate on file — enter manually"
+                          />
+                        );
+                      })()}
                     </div>
                     <div className="noir-field">
                       <label>VAX balance</label>
@@ -5356,11 +5373,12 @@ export default function NoirBookingManifest() {
                         const occKey = occupancyCount === 1 ? "solo" : occupancyCount === 2 ? "double" : null;
                         const roomHasRateV = (Number(guestDraft.price) > 0) || roommates.some((g) => Number(g.price) > 0);
                         const funjet = roomHasRateV && guestDraft.nights ? getFunjetRate(guestDraft.nights, occKey, guestDraft.roomType, guestDraft.contract) : null;
-                        if (!funjet) return Number(guestDraft.vaxBalance) || 0;
                         const insuredCost =
                           (guestDraft.insurance ? INSURANCE_COST : 0) +
                           roommates.reduce((s, g) => s + (g.insurance ? INSURANCE_COST : 0), 0);
-                        return funjet.net + insuredCost + funjet.commission;
+                        const netVal = funjet ? funjet.net : Number(guestDraft.netBalance) || 0;
+                        const commVal = guestDraft.noCommission ? 0 : funjet ? funjet.commission : Number(guestDraft.commission) || 0;
+                        return netVal + insuredCost + commVal;
                       })())} style={{ opacity: 0.8 }} />
                     </div>
                     <div className="noir-field">
@@ -5397,7 +5415,6 @@ export default function NoirBookingManifest() {
                         const occKey = occupancyCount === 1 ? "solo" : occupancyCount === 2 ? "double" : null;
                         const roomHasRateD = (Number(guestDraft.price) > 0) || roommates.some((g) => Number(g.price) > 0);
                         const funjet = roomHasRateD && guestDraft.nights ? getFunjetRate(guestDraft.nights, occKey, guestDraft.roomType, guestDraft.contract) : null;
-                        if (!funjet) return Number(guestDraft.difference) || 0;
                         const tjBalance =
                           roommates.reduce((s, g) => s + (Number(g.price) || 0) + (g.insurance ? INSURANCE_COST : 0), 0) +
                           (Number(guestDraft.price) || 0) +
@@ -5405,7 +5422,9 @@ export default function NoirBookingManifest() {
                         const insuredCost =
                           (guestDraft.insurance ? INSURANCE_COST : 0) +
                           roommates.reduce((s, g) => s + (g.insurance ? INSURANCE_COST : 0), 0);
-                        const vaxBalance = funjet.net + insuredCost + funjet.commission;
+                        const netVal = funjet ? funjet.net : Number(guestDraft.netBalance) || 0;
+                        const commVal = guestDraft.noCommission ? 0 : funjet ? funjet.commission : Number(guestDraft.commission) || 0;
+                        const vaxBalance = netVal + insuredCost + commVal;
                         return tjBalance - vaxBalance;
                       })())} style={{ opacity: 0.8 }} />
                     </div>
