@@ -414,6 +414,8 @@ export default function NoirBookingManifest() {
   const [concessionsDraft, setConcessionsDraft] = useState({ count: "", value: "" });
   const [bonusConfig, setBonusConfig] = useState(null);
   const [bonusConfigDraft, setBonusConfigDraft] = useState({ roomsPerIncrement: "", amountPerIncrement: "" });
+  const [bonusConfigC2, setBonusConfigC2] = useState(null);
+  const [bonusConfigDraftC2, setBonusConfigDraftC2] = useState({ roomsPerIncrement: "", amountPerIncrement: "" });
   const [activityLogEntries, setActivityLogEntries] = useState(null);
   const [flightsOpenDate, setFlightsOpenDate] = useState(null);
   const [flightsOpenFlight, setFlightsOpenFlight] = useState(null);
@@ -479,7 +481,7 @@ export default function NoirBookingManifest() {
         setCommissionData(null);
       }
     })();
-  }, [commissionAuth, activeTripId, roster, bonusConfig]);
+  }, [commissionAuth, activeTripId, roster, bonusConfig, bonusConfigC2]);
 
   useEffect(() => {
     if (!commissionAuth || !commissionAuth.lead || !activeTripId || activePage !== "activitylog") return;
@@ -941,6 +943,35 @@ export default function NoirBookingManifest() {
       logActivity(
         commissionAuth?.token,
         [`set bonus commission to ${money(Number(next.amountPerIncrement) || 0)} per ${next.roomsPerIncrement || 0} rooms`]
+      );
+    } catch {
+      // Read-only session — already showing the data above, it just won't persist.
+    }
+  }
+
+  useEffect(() => {
+    if (!activeTripId) return;
+    (async () => {
+      let val = null;
+      try {
+        const raw = await storageGet("bonusconfig2:" + activeTripId);
+        val = raw ? JSON.parse(raw) : null;
+      } catch {
+        val = null;
+      }
+      const loaded = val || { roomsPerIncrement: 11, amountPerIncrement: 1610 };
+      setBonusConfigC2(loaded);
+      setBonusConfigDraftC2(loaded);
+    })();
+  }, [activeTripId]);
+
+  async function saveBonusConfigC2(next) {
+    try {
+      await storageSet("bonusconfig2:" + activeTripId, JSON.stringify(next));
+      setBonusConfigC2(next);
+      logActivity(
+        commissionAuth?.token,
+        [`set Contract 2 bonus commission to ${money(Number(next.amountPerIncrement) || 0)} per ${next.roomsPerIncrement || 0} rooms`]
       );
     } catch {
       // Read-only session — already showing the data above, it just won't persist.
@@ -3461,6 +3492,68 @@ export default function NoirBookingManifest() {
                         <div className="noir-hint">
                           {money(commissionData.bonus.toMarkupPool)} of the bonus pool rolls into the markup pool (Adrienne's
                           and Free Agent rooms' share of the stake).
+                        </div>
+                      </>
+                    )}
+
+                    {commissionData.bonusContract2 && (
+                      <>
+                        <div className="noir-blocklabel" style={{ marginTop: 24 }}>Contract 2 bonus potential</div>
+                        <div className="noir-hint" style={{ marginBottom: 10 }}>
+                          Same formula, but counting only Contract 2's own priced rooms — separate from the trip-wide
+                          bonus above. This section is lead-only; Asia and LaQuanda never see it.
+                        </div>
+                        {bonusConfigC2 && (
+                          <div className="noir-grid3" style={{ maxWidth: 500, marginBottom: 14 }}>
+                            <div className="noir-field">
+                              <label>Rooms per increment</label>
+                              <input
+                                type="number"
+                                min="1"
+                                value={bonusConfigDraftC2.roomsPerIncrement}
+                                onChange={(e) => setBonusConfigDraftC2({ ...bonusConfigDraftC2, roomsPerIncrement: e.target.value })}
+                              />
+                            </div>
+                            <div className="noir-field">
+                              <label>Amount per increment</label>
+                              <input
+                                type="number"
+                                min="0"
+                                value={bonusConfigDraftC2.amountPerIncrement}
+                                onChange={(e) => setBonusConfigDraftC2({ ...bonusConfigDraftC2, amountPerIncrement: e.target.value })}
+                              />
+                            </div>
+                            <div style={{ display: "flex", alignItems: "flex-end" }}>
+                              <button type="button" className="noir-btn" onClick={() => saveBonusConfigC2(bonusConfigDraftC2)}>
+                                Save
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                        <div className="noir-stats" style={{ gridTemplateColumns: "repeat(3, 1fr)", marginBottom: 12, maxWidth: 620 }}>
+                          <div className="noir-statcard">
+                            <div className="noir-statlabel">Contract 2 priced rooms</div>
+                            <div className="noir-statval">{commissionData.bonusContract2.totalPricedRooms}</div>
+                          </div>
+                          <div className="noir-statcard">
+                            <div className="noir-statlabel">Bonus increments earned</div>
+                            <div className="noir-statval">{commissionData.bonusContract2.bonusIncrements}</div>
+                          </div>
+                          <div className="noir-statcard">
+                            <div className="noir-statlabel">Total bonus pool</div>
+                            <div className="noir-statval">{money(commissionData.bonusContract2.bonusPool)}</div>
+                          </div>
+                        </div>
+                        <div className="noir-agentcards" style={{ marginBottom: 12 }}>
+                          {["Carnisa", "Asia", "LaQuanda"].map((agent) => (
+                            <div key={agent} className="noir-agentcard" style={{ cursor: "default" }}>
+                              <div className="noir-statlabel">{agent}</div>
+                              <div className="noir-statval">{money(commissionData.bonusContract2.shares[agent] || 0)}</div>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="noir-hint">
+                          {money(commissionData.bonusContract2.toMarkupPool)} of Contract 2's bonus pool rolls into the markup pool.
                         </div>
                       </>
                     )}
