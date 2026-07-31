@@ -1,4 +1,3 @@
-
 import { useState, useEffect, useMemo } from "react";
 import { PieChart, Pie, Cell, Legend, Tooltip, ResponsiveContainer } from "recharts";
 import * as XLSX from "xlsx";
@@ -1544,7 +1543,17 @@ export default function NoirBookingManifest() {
     });
     const guestsWithRate = active.filter((g) => Number(g.price) > 0).length;
     const markupPoolFromGuests = PER_PERSON_MARKUP * guestsWithRate;
-    const totalMarkupPool = markupPoolFromGuests + markupPoolFromFreeAgents;
+    let extraMarkupTotal = 0;
+    roomMap.forEach((guestsInRoom) => {
+      const roomPrice = guestsInRoom.reduce((s, g) => s + (Number(g.price) || 0), 0);
+      if (roomPrice <= 0) return;
+      const roomBaseline = PER_PERSON_MARKUP * guestsInRoom.length;
+      const primary = guestsInRoom.find((g) => g.primaryTraveler) || guestsInRoom[0];
+      const roomActualMarkup = Number(primary?.difference) || 0;
+      extraMarkupTotal += Math.max(0, roomActualMarkup - roomBaseline);
+    });
+    extraMarkupTotal = Math.round(extraMarkupTotal * 100) / 100;
+    const totalMarkupPool = markupPoolFromGuests + markupPoolFromFreeAgents + extraMarkupTotal;
     return {
       count: active.length,
       guestsWithRate,
@@ -1594,6 +1603,7 @@ export default function NoirBookingManifest() {
       agentPricedRoomCounts,
       totalPricedRooms,
       markupPoolFromFreeAgents,
+      extraMarkupTotal,
       totalMarkupPool,
       revenueBreakdown: {
         vendorCost: roomRevenue - totalCommission,
@@ -1605,6 +1615,7 @@ export default function NoirBookingManifest() {
         tjkcTotal,
         markupPoolFromGuests,
         markupPoolFromFreeAgents,
+        extraMarkupTotal,
         totalMarkupPool,
         unconfirmedTotal,
         insuranceRevenue,
@@ -4472,14 +4483,21 @@ export default function NoirBookingManifest() {
                       <span className="noir-money">{money(contractStats.markupPoolFromFreeAgents)}</span>
                     </div>
                   )}
+                  {contractStats.extraMarkupTotal > 0 && (
+                    <div className="noir-markupitem">
+                      <span>Additional markup above the standard ${PER_PERSON_MARKUP}/person</span>
+                      <span className="noir-money">{money(contractStats.extraMarkupTotal)}</span>
+                    </div>
+                  )}
                 </div>
                 <div className="noir-hint">
                   Funjet only counts rooms that have a Price entered — right now that's {contractStats.revenueBreakdown.funjetMatchedRooms + contractStats.revenueBreakdown.funjetUnmatchedRooms} of {contractStats.rooms} rooms.
                   Of those priced rooms, {contractStats.revenueBreakdown.funjetMatchedRooms} match your actual 5-night net rates by room type and occupancy.
                   {contractStats.revenueBreakdown.funjetUnmatchedRooms > 0 &&
                     ` The other ${contractStats.revenueBreakdown.funjetUnmatchedRooms} priced room(s) — PLAT 2BDRM, triples, or 4-night stays — aren't covered by that table yet, so they fall back to the revenue-minus-commission estimate.`}
-                  {" "}The markup pool covers ${PER_PERSON_MARKUP} per person (itemized above), plus anything routed over
-                  from Free Agent rooms.
+                  {" "}The markup pool covers ${PER_PERSON_MARKUP} per person (itemized above) as a standard baseline, plus
+                  anything routed over from Free Agent rooms, plus any room whose actual computed markup goes beyond
+                  that baseline (common for manually-entered rooms, like individual Contract 2 bookings).
                 </div>
               </div>
             )}
