@@ -1753,7 +1753,7 @@ export default function NoirBookingManifest() {
 
   function openAddGuest() {
     setEditingId(null);
-    setGuestDraft(emptyGuest());
+    setGuestDraft({ ...emptyGuest(), contract: activeContract });
     setShowGuestForm(true);
   }
 
@@ -1797,6 +1797,7 @@ export default function NoirBookingManifest() {
     roommate.arrivalDate = draft.arrivalDate;
     roommate.nights = draft.nights;
     roommate.agent = draft.agent;
+    roommate.contract = draft.contract;
     setEditingId(null);
     setGuestDraft(roommate);
   }
