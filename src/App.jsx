@@ -1547,10 +1547,7 @@ export default function NoirBookingManifest() {
       }
       const roomPrice = guestsInRoom.reduce((s, g) => s + (Number(g.price) || 0), 0);
       const stakeAgent = primaryAgent || "Free Agent";
-      const isPersonalRoom =
-        stakeAgent !== "Free Agent" &&
-        guestsInRoom.some((g) => g.name && g.name.trim().split(/\s+/)[0].toLowerCase() === stakeAgent.toLowerCase());
-      if (roomPrice > 0 && !isPersonalRoom) {
+      if (roomPrice > 0) {
         totalPricedRooms += 1;
         agentPricedRoomCounts[stakeAgent] = (agentPricedRoomCounts[stakeAgent] || 0) + 1;
       }
@@ -3411,7 +3408,7 @@ export default function NoirBookingManifest() {
                     <div className="noir-blocklabel" style={{ marginTop: 24 }}>Agent stake in the trip</div>
                     <div className="noir-hint" style={{ marginBottom: 10 }}>
                       Rooms booked by that agent, divided by all priced rooms in the trip — a room with no per-person
-                      rate doesn't count, and neither does an agent's own personal room (their own trip, not a sale).
+                      rate doesn't count. Every room counts here, including an agent's own personal booking.
                     </div>
                     <div className="noir-agentcards" style={{ marginBottom: 20 }}>
                       {[...AGENTS, "Free Agent"].map((agent) => {
