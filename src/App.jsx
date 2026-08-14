@@ -1183,13 +1183,81 @@ export default function NoirBookingManifest() {
   }
 
   function syncRoomFinancials(list) {
-    // Financial fields (TJ balance, Net balance, Commission, VAX balance, Markup, TJKC
-    // deduction, Net commission) are fully manually controlled now — this function used
-    // to auto-compute them from the rate tables on every save, but nothing gets
-    // auto-written anymore. The guest form still shows a "Suggested" hint pulled from
-    // the rate tables for reference. Kept as a pass-through in case future auto-fill
-    // behavior (e.g. a "fill from rate table" button) gets added back deliberately.
-    return list;
+    // Net balance and Commission are fully manual — whatever's typed on the primary
+    // traveler is the source of truth, never touched here. TJ balance, Markup
+    // (= TJ balance - Commission - Net balance), TJKC deduction, and Net commission
+    // all auto-calculate from those two manual numbers plus room prices.
+    const groups = new Map();
+    list.forEach((g) => {
+      if (g.cancelled) return;
+      const key = (g.roomGroup && g.roomGroup.trim().toLowerCase()) || "solo:" + g.id;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(g);
+    });
+    const roomInfo = new Map();
+    groups.forEach((guestsInRoom, key) => {
+      const price = guestsInRoom.reduce(
+        (s, g) => s + (Number(g.price) || 0) + (g.insurance ? INSURANCE_COST : 0),
+        0
+      );
+      const primaryGuest = getPrimaryGuest(guestsInRoom);
+      const commission = Number(primaryGuest?.commission) || 0;
+      const netBalance = Number(primaryGuest?.netBalance) || 0;
+      const primaryAgent = getRoomPrimaryAgent(guestsInRoom);
+      roomInfo.set(key, {
+        price,
+        commission,
+        netBalance,
+        primaryAgent,
+        secondaryAgent: primaryGuest?.secondaryAgent || "",
+      });
+    });
+    return list.map((g) => {
+      if (g.cancelled) return g;
+      const key = (g.roomGroup && g.roomGroup.trim().toLowerCase()) || "solo:" + g.id;
+      const info = roomInfo.get(key);
+      if (!info) return g;
+      let tjkcDeduction = g.tjkcDeduction;
+      let netCommission = g.netCommission;
+      let secondaryTjkcDeduction = g.secondaryTjkcDeduction;
+      let secondaryNetCommission = g.secondaryNetCommission;
+      const validSecondary =
+        info.secondaryAgent && info.secondaryAgent !== info.primaryAgent && typeof AGENT_SPLIT_RATES[info.secondaryAgent] === "number";
+      if (validSecondary && info.primaryAgent && typeof AGENT_SPLIT_RATES[info.primaryAgent] === "number") {
+        // 50/50 dollar split — each agent's own split rate applies to their own half.
+        const half = info.commission / 2;
+        const primaryRate = AGENT_SPLIT_RATES[info.primaryAgent];
+        const secondaryRate = AGENT_SPLIT_RATES[info.secondaryAgent];
+        tjkcDeduction = Math.round(half * (1 - primaryRate) * 100) / 100;
+        netCommission = Math.round(half * primaryRate * 100) / 100;
+        secondaryTjkcDeduction = Math.round(half * (1 - secondaryRate) * 100) / 100;
+        secondaryNetCommission = Math.round(half * secondaryRate * 100) / 100;
+      } else if (info.primaryAgent === "Adrienne") {
+        // Split unconfirmed — leave whatever's there untouched rather than guessing.
+      } else if (!info.primaryAgent) {
+        // No agent attributed: commission transfers to the markup pool, not a personal split.
+        tjkcDeduction = 0;
+        netCommission = 0;
+        secondaryTjkcDeduction = 0;
+        secondaryNetCommission = 0;
+      } else if (typeof AGENT_SPLIT_RATES[info.primaryAgent] === "number") {
+        const rate = AGENT_SPLIT_RATES[info.primaryAgent];
+        tjkcDeduction = Math.round(info.commission * (1 - rate) * 100) / 100;
+        netCommission = Math.round(info.commission * rate * 100) / 100;
+        secondaryTjkcDeduction = 0;
+        secondaryNetCommission = 0;
+      }
+      const difference = Math.round((info.price - info.commission - info.netBalance) * 100) / 100;
+      return {
+        ...g,
+        tjBalance: info.price,
+        tjkcDeduction,
+        netCommission,
+        secondaryTjkcDeduction,
+        secondaryNetCommission,
+        difference,
+      };
+    });
   }
 
   async function saveRoster(next) {
@@ -5393,29 +5461,20 @@ export default function NoirBookingManifest() {
                     const roommates = groupKey && roster
                       ? roster.filter((g) => !g.cancelled && g.id !== guestDraft.id && (g.roomGroup || "").trim().toLowerCase() === groupKey)
                       : [];
-                    const occupancyCount = roommates.length + 1;
-                    const occKey = occupancyCount === 1 ? "solo" : occupancyCount === 2 ? "double" : null;
-                    const roomHasRate = (Number(guestDraft.price) > 0) || roommates.some((g) => Number(g.price) > 0);
-                    const funjet = roomHasRate && guestDraft.nights ? getFunjetRate(guestDraft.nights, occKey, guestDraft.roomType, guestDraft.contract) : null;
-                    const insuredCost =
-                      (guestDraft.insurance ? INSURANCE_COST : 0) +
-                      roommates.reduce((s, g) => s + (g.insurance ? INSURANCE_COST : 0), 0);
-                    const suggestedTjBalance =
+                    const tjBalance =
                       (Number(guestDraft.price) || 0) + (guestDraft.insurance ? INSURANCE_COST : 0) +
                       roommates.reduce((s, g) => s + (Number(g.price) || 0) + (g.insurance ? INSURANCE_COST : 0), 0);
-                    const suggestedNet = guestDraft.noCommission ? 0 : funjet ? funjet.net : null;
-                    const suggestedCommission = guestDraft.noCommission ? 0 : funjet ? funjet.commission : null;
-                    const suggestedVax = suggestedNet != null && suggestedCommission != null ? suggestedNet + insuredCost + suggestedCommission : null;
-                    const suggestedDifference = suggestedVax != null ? suggestedTjBalance - suggestedVax : null;
                     const agent = guestDraft.agent;
                     const rate = agent ? AGENT_SPLIT_RATES[agent] : undefined;
                     const hasSplitRate = typeof rate === "number";
-                    const suggestedTjkc = suggestedCommission != null && hasSplitRate ? suggestedCommission * (1 - rate) : null;
-                    const suggestedNetComm = suggestedCommission != null && hasSplitRate ? suggestedCommission * rate : null;
-                    const suggestedField = (val) => (val == null ? null : `Suggested: ${money(val)}`);
+                    const commissionVal = Number(guestDraft.commission) || 0;
+                    const netVal = Number(guestDraft.netBalance) || 0;
+                    const difference = tjBalance - commissionVal - netVal;
+                    const tjkc = hasSplitRate ? commissionVal * (1 - rate) : 0;
+                    const netComm = hasSplitRate ? commissionVal * rate : 0;
                     return (
                       <>
-                        <div className="noir-grid4">
+                        <div className="noir-grid3">
                           <div className="noir-field">
                             <label>Net balance</label>
                             <input
@@ -5423,7 +5482,6 @@ export default function NoirBookingManifest() {
                               value={guestDraft.netBalance}
                               onChange={(e) => setGuestDraft({ ...guestDraft, netBalance: e.target.value })}
                             />
-                            {suggestedField(suggestedNet) && <div className="noir-sub">{suggestedField(suggestedNet)}</div>}
                           </div>
                           <div className="noir-field">
                             <label>Commission</label>
@@ -5432,59 +5490,29 @@ export default function NoirBookingManifest() {
                               value={guestDraft.commission}
                               onChange={(e) => setGuestDraft({ ...guestDraft, commission: e.target.value })}
                             />
-                            {suggestedField(suggestedCommission) && <div className="noir-sub">{suggestedField(suggestedCommission)}</div>}
-                          </div>
-                          <div className="noir-field">
-                            <label>VAX balance</label>
-                            <input
-                              type="number"
-                              value={guestDraft.vaxBalance}
-                              onChange={(e) => setGuestDraft({ ...guestDraft, vaxBalance: e.target.value })}
-                            />
-                            {suggestedField(suggestedVax) && <div className="noir-sub">{suggestedField(suggestedVax)}</div>}
                           </div>
                           <div className="noir-field">
                             <label>TJ balance</label>
-                            <input
-                              type="number"
-                              value={guestDraft.tjBalance}
-                              onChange={(e) => setGuestDraft({ ...guestDraft, tjBalance: e.target.value })}
-                            />
-                            <div className="noir-sub">{`Suggested: ${money(suggestedTjBalance)}`}</div>
+                            <input type="text" readOnly value={money(tjBalance)} style={{ opacity: 0.8 }} />
                           </div>
                         </div>
                         <div className="noir-hint">
-                          Every field here is fully manual — nothing auto-writes on save anymore. "Suggested" is only
-                          a reference pulled from the rate tables (or, for TJ balance, everyone's price in this room);
-                          type over it or leave your own number in place, whichever you'd rather keep.
+                          Net balance and Commission are entered by hand. TJ balance auto-sums everyone's price in
+                          this room. Markup, TJKC deduction, and Net commission calculate automatically from the
+                          numbers above — Markup is TJ balance minus Commission minus Net balance.
                         </div>
                         <div className="noir-grid3" style={{ marginTop: 10 }}>
                           <div className="noir-field">
                             <label>Difference (markup)</label>
-                            <input
-                              type="number"
-                              value={guestDraft.difference}
-                              onChange={(e) => setGuestDraft({ ...guestDraft, difference: e.target.value })}
-                            />
-                            {suggestedField(suggestedDifference) && <div className="noir-sub">{suggestedField(suggestedDifference)}</div>}
+                            <input type="text" readOnly value={money(difference)} style={{ opacity: 0.8 }} />
                           </div>
                           <div className="noir-field">
                             <label>TJKC deduction</label>
-                            <input
-                              type="number"
-                              value={guestDraft.tjkcDeduction}
-                              onChange={(e) => setGuestDraft({ ...guestDraft, tjkcDeduction: e.target.value })}
-                            />
-                            {suggestedField(suggestedTjkc) && <div className="noir-sub">{suggestedField(suggestedTjkc)}</div>}
+                            <input type="text" readOnly value={money(tjkc)} style={{ opacity: 0.8 }} />
                           </div>
                           <div className="noir-field">
                             <label>Net commission</label>
-                            <input
-                              type="number"
-                              value={guestDraft.netCommission}
-                              onChange={(e) => setGuestDraft({ ...guestDraft, netCommission: e.target.value })}
-                            />
-                            {suggestedField(suggestedNetComm) && <div className="noir-sub">{suggestedField(suggestedNetComm)}</div>}
+                            <input type="text" readOnly value={money(netComm)} style={{ opacity: 0.8 }} />
                           </div>
                         </div>
                       </>
