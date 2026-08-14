@@ -44,7 +44,7 @@ const GUEST_TRACKED_FIELDS = [
   ["airline", "Airline"], ["flightNumber", "Flight number"], ["roomType", "Room type"], ["bedding", "Bedding"],
   ["dateBooked", "Date booked"], ["bookingNumber", "Booking number"], ["autoPay", "Auto pay"],
   ["celebration", "Celebration"], ["dateOfCeleb", "Date of celebration"], ["referredBy", "Referred by"],
-  ["agent", "Agent"], ["insurance", "Insurance"], ["itinerarySent", "Itinerary sent"], ["registered", "Registered"],
+  ["agent", "Agent"], ["secondaryAgent", "Split with agent"], ["insurance", "Insurance"], ["itinerarySent", "Itinerary sent"], ["registered", "Registered"],
   ["primaryTraveler", "Primary traveler"], ["catamaran", "Catamaran"], ["atvFarm", "ATV Farm"],
   ["sevenMile", "7 Mile"], ["clubMobay", "Club Mobay"], ["price", "Price"], ["roomGroup", "Room group"],
   ["contract", "Contract"], ["commission", "Commission"], ["noCommission", "No commission override"], ["cancelled", "Cancelled"],
@@ -314,6 +314,9 @@ const emptyGuest = () => ({
   state: "",
   pastTrips: [],
   possibleAddition: false,
+  secondaryAgent: "",
+  secondaryTjkcDeduction: "",
+  secondaryNetCommission: "",
   nights: "",
   instagram: "",
   email: "",
@@ -1180,63 +1183,13 @@ export default function NoirBookingManifest() {
   }
 
   function syncRoomFinancials(list) {
-    const groups = new Map();
-    list.forEach((g) => {
-      if (g.cancelled) return;
-      const key = (g.roomGroup && g.roomGroup.trim().toLowerCase()) || "solo:" + g.id;
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(g);
-    });
-    const roomInfo = new Map();
-    groups.forEach((guestsInRoom, key) => {
-      const price = guestsInRoom.reduce(
-        (s, g) => s + (Number(g.price) || 0) + (g.insurance ? INSURANCE_COST : 0),
-        0
-      );
-      const occupancyKey = guestsInRoom.length === 1 ? "solo" : guestsInRoom.length === 2 ? "double" : null;
-      const primaryGuest = getPrimaryGuest(guestsInRoom);
-      const nights = primaryGuest?.nights;
-      const roomType = primaryGuest?.roomType;
-      const hasRate = guestsInRoom.some((g) => Number(g.price) > 0);
-      const funjet = hasRate && nights ? getFunjetRate(nights, occupancyKey, roomType, primaryGuest?.contract) : null;
-      const manualCommission = Number(primaryGuest?.commission) || 0;
-      const manualNetBalance = Number(primaryGuest?.netBalance) || 0;
-      const commission = primaryGuest?.noCommission ? 0 : funjet ? funjet.commission : manualCommission;
-      const netBalanceValue = funjet ? funjet.net : manualNetBalance;
-      const primaryAgent = getRoomPrimaryAgent(guestsInRoom);
-      const insuredCost = guestsInRoom.reduce((s, g) => s + (g.insurance ? INSURANCE_COST : 0), 0);
-      roomInfo.set(key, {
-        price,
-        commission,
-        primaryAgent,
-        netBalanceValue,
-        autoMatched: !!funjet,
-        insuredCost,
-      });
-    });
-    return list.map((g) => {
-      if (g.cancelled) return g;
-      const key = (g.roomGroup && g.roomGroup.trim().toLowerCase()) || "solo:" + g.id;
-      const info = roomInfo.get(key);
-      if (!info) return g;
-      let tjkcDeduction = g.tjkcDeduction;
-      let netCommission = g.netCommission;
-      const netBalance = info.netBalanceValue;
-      const vaxBalance = Math.round((info.netBalanceValue + info.insuredCost + info.commission) * 100) / 100;
-      if (info.primaryAgent === "Adrienne") {
-        // Split unconfirmed — leave whatever's there untouched rather than guessing.
-      } else if (!info.primaryAgent) {
-        // No agent attributed: commission transfers to the markup pool, not a personal split.
-        tjkcDeduction = 0;
-        netCommission = 0;
-      } else if (typeof AGENT_SPLIT_RATES[info.primaryAgent] === "number") {
-        const rate = AGENT_SPLIT_RATES[info.primaryAgent];
-        tjkcDeduction = Math.round(info.commission * (1 - rate) * 100) / 100;
-        netCommission = Math.round(info.commission * rate * 100) / 100;
-      }
-      const difference = Math.round((info.price - vaxBalance) * 100) / 100;
-      return { ...g, tjBalance: info.price, commission: info.commission, tjkcDeduction, netCommission, netBalance, vaxBalance, difference };
-    });
+    // Financial fields (TJ balance, Net balance, Commission, VAX balance, Markup, TJKC
+    // deduction, Net commission) are fully manually controlled now — this function used
+    // to auto-compute them from the rate tables on every save, but nothing gets
+    // auto-written anymore. The guest form still shows a "Suggested" hint pulled from
+    // the rate tables for reference. Kept as a pass-through in case future auto-fill
+    // behavior (e.g. a "fill from rate table" button) gets added back deliberately.
+    return list;
   }
 
   async function saveRoster(next) {
@@ -1547,9 +1500,16 @@ export default function NoirBookingManifest() {
       }
       const roomPrice = guestsInRoom.reduce((s, g) => s + (Number(g.price) || 0), 0);
       const stakeAgent = primaryAgent || "Free Agent";
+      const secondaryAgentForStake = getPrimaryGuest(guestsInRoom)?.secondaryAgent || "";
+      const validSecondaryForStake = secondaryAgentForStake && secondaryAgentForStake !== stakeAgent;
       if (roomPrice > 0) {
         totalPricedRooms += 1;
-        agentPricedRoomCounts[stakeAgent] = (agentPricedRoomCounts[stakeAgent] || 0) + 1;
+        if (validSecondaryForStake) {
+          agentPricedRoomCounts[stakeAgent] = (agentPricedRoomCounts[stakeAgent] || 0) + 0.5;
+          agentPricedRoomCounts[secondaryAgentForStake] = (agentPricedRoomCounts[secondaryAgentForStake] || 0) + 0.5;
+        } else {
+          agentPricedRoomCounts[stakeAgent] = (agentPricedRoomCounts[stakeAgent] || 0) + 1;
+        }
       }
       const occKey = guestsInRoom.length === 1 ? "solo" : guestsInRoom.length === 2 ? "double" : null;
       const primaryGuestForFunjet = getPrimaryGuest(guestsInRoom);
@@ -1569,14 +1529,22 @@ export default function NoirBookingManifest() {
       addonCounts[a.key] = withAddon.length;
       addonNames[a.key] = withAddon.map((g) => g.name);
     });
-    const guestsWithRate = active.filter((g) => Number(g.price) > 0).length;
+    let guestsWithRate = 0;
+    roomMap.forEach((guestsInRoom) => {
+      const roomPrice = guestsInRoom.reduce((s, g) => s + (Number(g.price) || 0), 0);
+      if (roomPrice <= 0) return;
+      const primary = guestsInRoom.find((g) => g.primaryTraveler) || guestsInRoom[0];
+      if (primary?.noCommission) return; // At-cost personal room — no markup assumed for anyone in it.
+      guestsWithRate += guestsInRoom.length;
+    });
     const markupPoolFromGuests = PER_PERSON_MARKUP * guestsWithRate;
     let extraMarkupTotal = 0;
     roomMap.forEach((guestsInRoom) => {
       const roomPrice = guestsInRoom.reduce((s, g) => s + (Number(g.price) || 0), 0);
       if (roomPrice <= 0) return;
-      const roomBaseline = PER_PERSON_MARKUP * guestsInRoom.length;
       const primary = guestsInRoom.find((g) => g.primaryTraveler) || guestsInRoom[0];
+      if (primary?.noCommission) return; // At-cost personal room — no markup, standard or extra.
+      const roomBaseline = PER_PERSON_MARKUP * guestsInRoom.length;
       const roomActualMarkup = Number(primary?.difference) || 0;
       extraMarkupTotal += Math.max(0, roomActualMarkup - roomBaseline);
     });
@@ -3408,7 +3376,8 @@ export default function NoirBookingManifest() {
                     <div className="noir-blocklabel" style={{ marginTop: 24 }}>Agent stake in the trip</div>
                     <div className="noir-hint" style={{ marginBottom: 10 }}>
                       Rooms booked by that agent, divided by all priced rooms in the trip — a room with no per-person
-                      rate doesn't count. Every room counts here, including an agent's own personal booking.
+                      rate doesn't count. Every room counts here, including an agent's own personal booking, and rooms
+                      from both contracts combined.
                     </div>
                     <div className="noir-agentcards" style={{ marginBottom: 20 }}>
                       {[...AGENTS, "Free Agent"].map((agent) => {
@@ -3428,10 +3397,11 @@ export default function NoirBookingManifest() {
                       <>
                         <div className="noir-blocklabel" style={{ marginTop: 24 }}>Bonus commission potential</div>
                         <div className="noir-hint" style={{ marginBottom: 10 }}>
-                          For every {commissionData.bonus.roomsPerIncrement} priced rooms booked trip-wide, the group earns an
+                          For every {commissionData.bonus.roomsPerIncrement} priced Contract 1 rooms booked, the group earns an
                           estimated {money(commissionData.bonus.amountPerIncrement)} bonus — split only between Carnisa, Asia, and
-                          LaQuanda based on each one's share of all priced rooms. Whatever share belongs to Adrienne's and Free
-                          Agent rooms rolls into the markup pool instead, the same way unattributed commission already does.
+                          LaQuanda based on each one's share of Contract 1's priced rooms. Whatever share belongs to Adrienne's and
+                          Free Agent rooms rolls into the markup pool instead, the same way unattributed commission already does.
+                          Contract 2 rooms don't count here — they have their own separate bonus tracker below.
                         </div>
                         {bonusConfig && (
                           <div className="noir-grid3" style={{ maxWidth: 500, marginBottom: 14 }}>
@@ -3466,7 +3436,7 @@ export default function NoirBookingManifest() {
                         )}
                         <div className="noir-stats" style={{ gridTemplateColumns: "repeat(3, 1fr)", marginBottom: 12, maxWidth: 620 }}>
                           <div className="noir-statcard">
-                            <div className="noir-statlabel">Priced rooms so far</div>
+                            <div className="noir-statlabel">Contract 1 priced rooms</div>
                             <div className="noir-statval">{commissionData.bonus.totalPricedRooms}</div>
                           </div>
                           <div className="noir-statcard">
@@ -3679,9 +3649,9 @@ export default function NoirBookingManifest() {
                       <>
                         <div className="noir-blocklabel" style={{ marginTop: 24 }}>Bonus commission potential</div>
                         <div className="noir-hint" style={{ marginBottom: 10 }}>
-                          For every {commissionData.bonus.roomsPerIncrement} priced rooms booked trip-wide, the group earns an
+                          For every {commissionData.bonus.roomsPerIncrement} priced Contract 1 rooms booked, the group earns an
                           estimated {money(commissionData.bonus.amountPerIncrement)} bonus, split between Carnisa, Asia, and
-                          LaQuanda based on room stake. This shows your share and the group total only.
+                          LaQuanda based on Contract 1 room stake. This shows your share and the group total only.
                         </div>
                         <div className="noir-stats" style={{ gridTemplateColumns: "repeat(2, 1fr)", maxWidth: 420 }}>
                           <div className="noir-statcard">
@@ -4560,7 +4530,7 @@ export default function NoirBookingManifest() {
                   </div>
                 </div>
                 <div className="noir-markupitems">
-                  <div className="noir-blocklabel">Markup pool breakdown · {contractStats.guestsWithRate} of {contractStats.count} guests have a rate</div>
+                  <div className="noir-blocklabel">Markup pool breakdown · {contractStats.guestsWithRate} of {contractStats.count} guests contribute markup (at-cost personal rooms excluded)</div>
                   {MARKUP_LINE_ITEMS.map((item) => (
                     <div key={item.label} className="noir-markupitem">
                       <span>{item.label} (${item.amount}/person)</span>
@@ -4674,7 +4644,7 @@ export default function NoirBookingManifest() {
                     const first = ordered[0];
                     const primary = ordered.find((g) => g.primaryTraveler && g.agent);
                     const agents = primary
-                      ? [primary.agent]
+                      ? [primary.agent, ...(primary.secondaryAgent ? [primary.secondaryAgent + " (split)"] : [])]
                       : Array.from(new Set(ordered.map((g) => g.agent).filter(Boolean)));
                     const roomPrice = ordered.reduce(
                       (s, g) => s + (Number(g.price) || 0) + (g.insurance ? INSURANCE_COST : 0),
@@ -5404,167 +5374,122 @@ export default function NoirBookingManifest() {
                     />
                     <label>No commission on this room (e.g. an agent's own personal booking, at-cost)</label>
                   </div>
-                  <div className="noir-grid4">
-                    <div className="noir-field">
-                      <label>Net balance</label>
-                      {(() => {
-                        const groupKey = (guestDraft.roomGroup || "").trim().toLowerCase();
-                        let occupancyCount = 1;
-                        let roommates = [];
-                        if (groupKey && roster) {
-                          roommates = roster.filter(
-                            (g) => !g.cancelled && g.id !== guestDraft.id && (g.roomGroup || "").trim().toLowerCase() === groupKey
-                          );
-                          occupancyCount = roommates.length + 1;
-                        }
-                        const occKey = occupancyCount === 1 ? "solo" : occupancyCount === 2 ? "double" : null;
-                        const roomHasRate = (Number(guestDraft.price) > 0) || roommates.some((g) => Number(g.price) > 0);
-                        const funjet = roomHasRate && guestDraft.nights ? getFunjetRate(guestDraft.nights, occKey, guestDraft.roomType, guestDraft.contract) : null;
-                        if (funjet) {
-                          return <input type="text" readOnly value={money(funjet.net)} style={{ opacity: 0.8 }} />;
-                        }
-                        return (
-                          <input
-                            type="number"
-                            value={guestDraft.netBalance}
-                            onChange={(e) => setGuestDraft({ ...guestDraft, netBalance: e.target.value })}
-                            placeholder="No rate on file — enter manually"
-                          />
-                        );
-                      })()}
-                    </div>
-                    <div className="noir-field">
-                      <label>Commission</label>
-                      {(() => {
-                        const groupKey = (guestDraft.roomGroup || "").trim().toLowerCase();
-                        let occupancyCount = 1;
-                        if (groupKey && roster) {
-                          occupancyCount =
-                            roster.filter(
-                              (g) => !g.cancelled && g.id !== guestDraft.id && (g.roomGroup || "").trim().toLowerCase() === groupKey
-                            ).length + 1;
-                        }
-                        const occKey = occupancyCount === 1 ? "solo" : occupancyCount === 2 ? "double" : null;
-                        const roommatesForRate = groupKey && roster
-                          ? roster.filter((g) => !g.cancelled && g.id !== guestDraft.id && (g.roomGroup || "").trim().toLowerCase() === groupKey)
-                          : [];
-                        const roomHasRate = (Number(guestDraft.price) > 0) || roommatesForRate.some((g) => Number(g.price) > 0);
-                        const funjet = roomHasRate && guestDraft.nights ? getFunjetRate(guestDraft.nights, occKey, guestDraft.roomType, guestDraft.contract) : null;
-                        if (guestDraft.noCommission) {
-                          return <input type="text" readOnly value={money(0)} style={{ opacity: 0.8 }} />;
-                        }
-                        if (funjet) {
-                          return <input type="text" readOnly value={money(funjet.commission)} style={{ opacity: 0.8 }} />;
-                        }
-                        return (
-                          <input
-                            type="number"
-                            value={guestDraft.commission}
-                            onChange={(e) => setGuestDraft({ ...guestDraft, commission: e.target.value })}
-                            placeholder="No rate on file — enter manually"
-                          />
-                        );
-                      })()}
-                    </div>
-                    <div className="noir-field">
-                      <label>VAX balance</label>
-                      <input type="text" readOnly value={money((() => {
-                        const groupKey = (guestDraft.roomGroup || "").trim().toLowerCase();
-                        let occupancyCount = 1;
-                        let roommates = [];
-                        if (groupKey && roster) {
-                          roommates = roster.filter(
-                            (g) => !g.cancelled && g.id !== guestDraft.id && (g.roomGroup || "").trim().toLowerCase() === groupKey
-                          );
-                          occupancyCount = roommates.length + 1;
-                        }
-                        const occKey = occupancyCount === 1 ? "solo" : occupancyCount === 2 ? "double" : null;
-                        const roomHasRateV = (Number(guestDraft.price) > 0) || roommates.some((g) => Number(g.price) > 0);
-                        const funjet = roomHasRateV && guestDraft.nights ? getFunjetRate(guestDraft.nights, occKey, guestDraft.roomType, guestDraft.contract) : null;
-                        const insuredCost =
-                          (guestDraft.insurance ? INSURANCE_COST : 0) +
-                          roommates.reduce((s, g) => s + (g.insurance ? INSURANCE_COST : 0), 0);
-                        const netVal = funjet ? funjet.net : Number(guestDraft.netBalance) || 0;
-                        const commVal = guestDraft.noCommission ? 0 : funjet ? funjet.commission : Number(guestDraft.commission) || 0;
-                        return netVal + insuredCost + commVal;
-                      })())} style={{ opacity: 0.8 }} />
-                    </div>
-                    <div className="noir-field">
-                      <label>TJ balance</label>
-                      <input type="text" readOnly value={money((() => {
-                        const groupKey = (guestDraft.roomGroup || "").trim().toLowerCase();
-                        const selfAmount = (Number(guestDraft.price) || 0) + (guestDraft.insurance ? INSURANCE_COST : 0);
-                        if (!groupKey || !roster) return selfAmount;
-                        const others = roster
-                          .filter((g) => !g.cancelled && g.id !== guestDraft.id && (g.roomGroup || "").trim().toLowerCase() === groupKey)
-                          .reduce((s, g) => s + (Number(g.price) || 0) + (g.insurance ? INSURANCE_COST : 0), 0);
-                        return others + selfAmount;
-                      })())} style={{ opacity: 0.8 }} />
-                    </div>
+                  <div className="noir-field" style={{ maxWidth: 260, marginBottom: 14 }}>
+                    <label>Split with a second agent (50/50)</label>
+                    <select
+                      className="noir-select"
+                      style={{ width: "100%", borderRadius: 7 }}
+                      value={guestDraft.secondaryAgent}
+                      onChange={(e) => setGuestDraft({ ...guestDraft, secondaryAgent: e.target.value })}
+                    >
+                      <option value="">No split</option>
+                      {AGENTS.filter((a) => a !== guestDraft.agent).map((a) => (
+                        <option key={a} value={a}>{a}</option>
+                      ))}
+                    </select>
                   </div>
-                  <div className="noir-hint">
-                    TJ balance updates automatically to match the room's total booking amount (sum of everyone's price
-                    in that room). Commission auto-fills from the Funjet table once Nights, occupancy (room group), and
-                    room type all match a known rate — otherwise it falls back to whatever's entered manually.
-                  </div>
-                  <div className="noir-grid3" style={{ marginTop: 10 }}>
-                    <div className="noir-field">
-                      <label>Difference (markup)</label>
-                      <input type="text" readOnly value={money((() => {
-                        const groupKey = (guestDraft.roomGroup || "").trim().toLowerCase();
-                        let roommates = [];
-                        let occupancyCount = 1;
-                        if (groupKey && roster) {
-                          roommates = roster.filter(
-                            (g) => !g.cancelled && g.id !== guestDraft.id && (g.roomGroup || "").trim().toLowerCase() === groupKey
-                          );
-                          occupancyCount = roommates.length + 1;
-                        }
-                        const occKey = occupancyCount === 1 ? "solo" : occupancyCount === 2 ? "double" : null;
-                        const roomHasRateD = (Number(guestDraft.price) > 0) || roommates.some((g) => Number(g.price) > 0);
-                        const funjet = roomHasRateD && guestDraft.nights ? getFunjetRate(guestDraft.nights, occKey, guestDraft.roomType, guestDraft.contract) : null;
-                        const tjBalance =
-                          roommates.reduce((s, g) => s + (Number(g.price) || 0) + (g.insurance ? INSURANCE_COST : 0), 0) +
-                          (Number(guestDraft.price) || 0) +
-                          (guestDraft.insurance ? INSURANCE_COST : 0);
-                        const insuredCost =
-                          (guestDraft.insurance ? INSURANCE_COST : 0) +
-                          roommates.reduce((s, g) => s + (g.insurance ? INSURANCE_COST : 0), 0);
-                        const netVal = funjet ? funjet.net : Number(guestDraft.netBalance) || 0;
-                        const commVal = guestDraft.noCommission ? 0 : funjet ? funjet.commission : Number(guestDraft.commission) || 0;
-                        const vaxBalance = netVal + insuredCost + commVal;
-                        return tjBalance - vaxBalance;
-                      })())} style={{ opacity: 0.8 }} />
-                    </div>
-                    {(() => {
-                      const roomCommission = guestDraft.noCommission ? 0 : Number(guestDraft.commission) || 0;
-                      const agent = guestDraft.agent;
-                      if (agent === "Adrienne") {
-                        return (
-                          <>
-                            {field("TJKC deduction", guestDraft.tjkcDeduction, (v) => setGuestDraft({ ...guestDraft, tjkcDeduction: v }), "number")}
-                            {field("Net commission", guestDraft.netCommission, (v) => setGuestDraft({ ...guestDraft, netCommission: v }), "number")}
-                          </>
-                        );
-                      }
-                      const rate = agent ? AGENT_SPLIT_RATES[agent] : undefined;
-                      const hasRate = typeof rate === "number";
-                      const tjkc = hasRate ? roomCommission * (1 - rate) : 0;
-                      const net = hasRate ? roomCommission * rate : 0;
-                      return (
-                        <>
+                  {(() => {
+                    const groupKey = (guestDraft.roomGroup || "").trim().toLowerCase();
+                    const roommates = groupKey && roster
+                      ? roster.filter((g) => !g.cancelled && g.id !== guestDraft.id && (g.roomGroup || "").trim().toLowerCase() === groupKey)
+                      : [];
+                    const occupancyCount = roommates.length + 1;
+                    const occKey = occupancyCount === 1 ? "solo" : occupancyCount === 2 ? "double" : null;
+                    const roomHasRate = (Number(guestDraft.price) > 0) || roommates.some((g) => Number(g.price) > 0);
+                    const funjet = roomHasRate && guestDraft.nights ? getFunjetRate(guestDraft.nights, occKey, guestDraft.roomType, guestDraft.contract) : null;
+                    const insuredCost =
+                      (guestDraft.insurance ? INSURANCE_COST : 0) +
+                      roommates.reduce((s, g) => s + (g.insurance ? INSURANCE_COST : 0), 0);
+                    const suggestedTjBalance =
+                      (Number(guestDraft.price) || 0) + (guestDraft.insurance ? INSURANCE_COST : 0) +
+                      roommates.reduce((s, g) => s + (Number(g.price) || 0) + (g.insurance ? INSURANCE_COST : 0), 0);
+                    const suggestedNet = guestDraft.noCommission ? 0 : funjet ? funjet.net : null;
+                    const suggestedCommission = guestDraft.noCommission ? 0 : funjet ? funjet.commission : null;
+                    const suggestedVax = suggestedNet != null && suggestedCommission != null ? suggestedNet + insuredCost + suggestedCommission : null;
+                    const suggestedDifference = suggestedVax != null ? suggestedTjBalance - suggestedVax : null;
+                    const agent = guestDraft.agent;
+                    const rate = agent ? AGENT_SPLIT_RATES[agent] : undefined;
+                    const hasSplitRate = typeof rate === "number";
+                    const suggestedTjkc = suggestedCommission != null && hasSplitRate ? suggestedCommission * (1 - rate) : null;
+                    const suggestedNetComm = suggestedCommission != null && hasSplitRate ? suggestedCommission * rate : null;
+                    const suggestedField = (val) => (val == null ? null : `Suggested: ${money(val)}`);
+                    return (
+                      <>
+                        <div className="noir-grid4">
+                          <div className="noir-field">
+                            <label>Net balance</label>
+                            <input
+                              type="number"
+                              value={guestDraft.netBalance}
+                              onChange={(e) => setGuestDraft({ ...guestDraft, netBalance: e.target.value })}
+                            />
+                            {suggestedField(suggestedNet) && <div className="noir-sub">{suggestedField(suggestedNet)}</div>}
+                          </div>
+                          <div className="noir-field">
+                            <label>Commission</label>
+                            <input
+                              type="number"
+                              value={guestDraft.commission}
+                              onChange={(e) => setGuestDraft({ ...guestDraft, commission: e.target.value })}
+                            />
+                            {suggestedField(suggestedCommission) && <div className="noir-sub">{suggestedField(suggestedCommission)}</div>}
+                          </div>
+                          <div className="noir-field">
+                            <label>VAX balance</label>
+                            <input
+                              type="number"
+                              value={guestDraft.vaxBalance}
+                              onChange={(e) => setGuestDraft({ ...guestDraft, vaxBalance: e.target.value })}
+                            />
+                            {suggestedField(suggestedVax) && <div className="noir-sub">{suggestedField(suggestedVax)}</div>}
+                          </div>
+                          <div className="noir-field">
+                            <label>TJ balance</label>
+                            <input
+                              type="number"
+                              value={guestDraft.tjBalance}
+                              onChange={(e) => setGuestDraft({ ...guestDraft, tjBalance: e.target.value })}
+                            />
+                            <div className="noir-sub">{`Suggested: ${money(suggestedTjBalance)}`}</div>
+                          </div>
+                        </div>
+                        <div className="noir-hint">
+                          Every field here is fully manual — nothing auto-writes on save anymore. "Suggested" is only
+                          a reference pulled from the rate tables (or, for TJ balance, everyone's price in this room);
+                          type over it or leave your own number in place, whichever you'd rather keep.
+                        </div>
+                        <div className="noir-grid3" style={{ marginTop: 10 }}>
+                          <div className="noir-field">
+                            <label>Difference (markup)</label>
+                            <input
+                              type="number"
+                              value={guestDraft.difference}
+                              onChange={(e) => setGuestDraft({ ...guestDraft, difference: e.target.value })}
+                            />
+                            {suggestedField(suggestedDifference) && <div className="noir-sub">{suggestedField(suggestedDifference)}</div>}
+                          </div>
                           <div className="noir-field">
                             <label>TJKC deduction</label>
-                            <input type="text" readOnly value={money(tjkc)} style={{ opacity: 0.8 }} />
+                            <input
+                              type="number"
+                              value={guestDraft.tjkcDeduction}
+                              onChange={(e) => setGuestDraft({ ...guestDraft, tjkcDeduction: e.target.value })}
+                            />
+                            {suggestedField(suggestedTjkc) && <div className="noir-sub">{suggestedField(suggestedTjkc)}</div>}
                           </div>
                           <div className="noir-field">
                             <label>Net commission</label>
-                            <input type="text" readOnly value={money(net)} style={{ opacity: 0.8 }} />
+                            <input
+                              type="number"
+                              value={guestDraft.netCommission}
+                              onChange={(e) => setGuestDraft({ ...guestDraft, netCommission: e.target.value })}
+                            />
+                            {suggestedField(suggestedNetComm) && <div className="noir-sub">{suggestedField(suggestedNetComm)}</div>}
                           </div>
-                        </>
-                      );
-                    })()}
-                  </div>
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
                   );
                 })()}
