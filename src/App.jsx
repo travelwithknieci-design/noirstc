@@ -48,6 +48,9 @@ const GUEST_TRACKED_FIELDS = [
   ["primaryTraveler", "Primary traveler"], ["catamaran", "Catamaran"], ["atvFarm", "ATV Farm"],
   ["sevenMile", "7 Mile"], ["clubMobay", "Club Mobay"], ["price", "Price"], ["roomGroup", "Room group"],
   ["contract", "Contract"], ["commission", "Commission"], ["noCommission", "No commission override"], ["cancelled", "Cancelled"],
+  ["cancelAmountPaid", "Cancellation: amount paid"], ["cancelAmountToSupplier", "Cancellation: amount to supplier"],
+  ["cancelNonRefundable", "Cancellation: non-refundable"], ["cancelVoucherAmount", "Cancellation: voucher amount"],
+  ["cancelDepositAmount", "Cancellation: deposit"], ["cancelDate", "Cancellation: date"], ["cancelFeeAmount", "Cancellation: fee"],
 ];
 
 function diffGuestRoster(oldList, newList) {
@@ -219,6 +222,51 @@ function getPrimaryGuest(guestsInRoom) {
   return guestsInRoom.find((g) => g.primaryTraveler) || guestsInRoom[0];
 }
 
+// Cancellation policy, shared by the guest form preview and the markup pool total so
+// they can never calculate this differently from each other:
+// - Insured: voucher = amount paid - insurance cost, cancellation fee = $0.
+// - Not insured, 100+ days before travel: deposit is non-refundable, plus 50% of
+//   whatever was paid above the deposit.
+// - Not insured, inside 100 days of travel: the full amount paid is non-refundable.
+// Returns { cancellationFee, voucherAmount } — cancellationFee is null when there's not
+// enough information yet (no insurance and missing either date).
+// Cancellation policy, shared by the guest form preview and the markup pool total so
+// they can never calculate this differently from each other. Takes the whole room
+// (every guest sharing this booking) since "Amount paid" is a room-level figure entered
+// once on the primary traveler, and the voucher splits evenly across every passenger in
+// the room regardless of who individually paid what.
+// - If anyone in the room is insured: voucher pool = amount paid - (insurance cost x
+//   number of insured passengers in the room), split evenly across every passenger in
+//   the room (insured or not). Cancellation fee to the markup pool is $0.
+// - If no one in the room is insured, 100+ days before travel: deposit is
+//   non-refundable, plus 50% of whatever was paid above the deposit. No voucher.
+// - If no one in the room is insured, inside 100 days of travel: the full amount paid
+//   is non-refundable. No voucher.
+// Returns { cancellationFee, voucherPerPerson } — cancellationFee is null when there's
+// not enough information yet (no one insured, and missing either date).
+function computeCancellationFee(guestsInRoom) {
+  const primary = getPrimaryGuest(guestsInRoom);
+  const amountPaid = Number(primary?.cancelAmountPaid) || 0;
+  const deposit = Number(primary?.cancelDepositAmount) || 0;
+  const passengerCount = guestsInRoom.length || 1;
+  const insuredCount = guestsInRoom.filter((g) => g.insurance).length;
+  if (insuredCount > 0) {
+    const pool = Math.max(0, amountPaid - INSURANCE_COST * insuredCount);
+    return { cancellationFee: 0, voucherPerPerson: pool / passengerCount };
+  }
+  if (!primary?.cancelDate || !primary?.arrivalDate) {
+    return { cancellationFee: null, voucherPerPerson: 0 };
+  }
+  const travel = new Date(primary.arrivalDate);
+  const cancelled = new Date(primary.cancelDate);
+  const daysOut = Math.round((travel - cancelled) / (1000 * 60 * 60 * 24));
+  if (daysOut < 100) {
+    return { cancellationFee: amountPaid, voucherPerPerson: 0 };
+  }
+  const aboveDeposit = Math.max(0, amountPaid - deposit);
+  return { cancellationFee: deposit + aboveDeposit * 0.5, voucherPerPerson: 0 };
+}
+
 const ADDONS = [
   { key: "catamaran", label: "Catamaran" },
   { key: "atvFarm", label: "ATV Farm" },
@@ -317,6 +365,13 @@ const emptyGuest = () => ({
   secondaryAgent: "",
   secondaryTjkcDeduction: "",
   secondaryNetCommission: "",
+  cancelAmountPaid: "",
+  cancelAmountToSupplier: "",
+  cancelNonRefundable: "",
+  cancelVoucherAmount: "",
+  cancelDepositAmount: "",
+  cancelDate: "",
+  cancelFeeAmount: "",
   nights: "",
   instagram: "",
   email: "",
@@ -417,8 +472,6 @@ export default function NoirBookingManifest() {
   const [concessionsDraft, setConcessionsDraft] = useState({ count: "", value: "" });
   const [bonusConfig, setBonusConfig] = useState(null);
   const [bonusConfigDraft, setBonusConfigDraft] = useState({ roomsPerIncrement: "", amountPerIncrement: "" });
-  const [bonusConfigC2, setBonusConfigC2] = useState(null);
-  const [bonusConfigDraftC2, setBonusConfigDraftC2] = useState({ roomsPerIncrement: "", amountPerIncrement: "" });
   const [activityLogEntries, setActivityLogEntries] = useState(null);
   const [flightsOpenDate, setFlightsOpenDate] = useState(null);
   const [flightsOpenFlight, setFlightsOpenFlight] = useState(null);
@@ -484,7 +537,7 @@ export default function NoirBookingManifest() {
         setCommissionData(null);
       }
     })();
-  }, [commissionAuth, activeTripId, roster, bonusConfig, bonusConfigC2]);
+  }, [commissionAuth, activeTripId, roster, bonusConfig]);
 
   useEffect(() => {
     if (!commissionAuth || !commissionAuth.lead || !activeTripId || activePage !== "activitylog") return;
@@ -946,35 +999,6 @@ export default function NoirBookingManifest() {
       logActivity(
         commissionAuth?.token,
         [`set bonus commission to ${money(Number(next.amountPerIncrement) || 0)} per ${next.roomsPerIncrement || 0} rooms`]
-      );
-    } catch {
-      // Read-only session — already showing the data above, it just won't persist.
-    }
-  }
-
-  useEffect(() => {
-    if (!activeTripId) return;
-    (async () => {
-      let val = null;
-      try {
-        const raw = await storageGet("bonusconfig2:" + activeTripId);
-        val = raw ? JSON.parse(raw) : null;
-      } catch {
-        val = null;
-      }
-      const loaded = val || { roomsPerIncrement: 11, amountPerIncrement: 1610 };
-      setBonusConfigC2(loaded);
-      setBonusConfigDraftC2(loaded);
-    })();
-  }, [activeTripId]);
-
-  async function saveBonusConfigC2(next) {
-    try {
-      await storageSet("bonusconfig2:" + activeTripId, JSON.stringify(next));
-      setBonusConfigC2(next);
-      logActivity(
-        commissionAuth?.token,
-        [`set Contract 2 bonus commission to ${money(Number(next.amountPerIncrement) || 0)} per ${next.roomsPerIncrement || 0} rooms`]
       );
     } catch {
       // Read-only session — already showing the data above, it just won't persist.
@@ -1617,7 +1641,19 @@ export default function NoirBookingManifest() {
       extraMarkupTotal += Math.max(0, roomActualMarkup - roomBaseline);
     });
     extraMarkupTotal = Math.round(extraMarkupTotal * 100) / 100;
-    const totalMarkupPool = markupPoolFromGuests + markupPoolFromFreeAgents + extraMarkupTotal;
+    const allRoomsMap = new Map();
+    (rosterList || []).forEach((g) => {
+      const key = (g.roomGroup && g.roomGroup.trim().toLowerCase()) || "solo:" + g.id;
+      if (!allRoomsMap.has(key)) allRoomsMap.set(key, []);
+      allRoomsMap.get(key).push(g);
+    });
+    let cancellationFeeTotal = 0;
+    allRoomsMap.forEach((guestsInRoom) => {
+      if (!guestsInRoom.some((g) => g.cancelled)) return;
+      cancellationFeeTotal += computeCancellationFee(guestsInRoom).cancellationFee || 0;
+    });
+    cancellationFeeTotal = Math.round(cancellationFeeTotal * 100) / 100;
+    const totalMarkupPool = markupPoolFromGuests + markupPoolFromFreeAgents + extraMarkupTotal + cancellationFeeTotal;
     return {
       count: active.length,
       guestsWithRate,
@@ -1668,6 +1704,7 @@ export default function NoirBookingManifest() {
       totalPricedRooms,
       markupPoolFromFreeAgents,
       extraMarkupTotal,
+      cancellationFeeTotal,
       totalMarkupPool,
       revenueBreakdown: {
         vendorCost: roomRevenue - totalCommission,
@@ -1680,6 +1717,7 @@ export default function NoirBookingManifest() {
         markupPoolFromGuests,
         markupPoolFromFreeAgents,
         extraMarkupTotal,
+        cancellationFeeTotal,
         totalMarkupPool,
         unconfirmedTotal,
         insuranceRevenue,
@@ -1692,8 +1730,8 @@ export default function NoirBookingManifest() {
 
   const stats = useMemo(() => computeStats(roster), [roster]);
   const contractStats = useMemo(
-    () => computeStats(roster ? roster.filter((g) => (g.contract || "1") === activeContract) : null),
-    [roster, activeContract]
+    () => computeStats(roster),
+    [roster]
   );
 
   const flightStats = useMemo(() => {
@@ -1738,7 +1776,7 @@ export default function NoirBookingManifest() {
 
   const visibleRoster = useMemo(() => {
     if (!roster) return [];
-    let list = roster.filter((g) => (g.contract || "1") === activeContract);
+    let list = roster;
     if (filter === "active") list = list.filter((g) => !g.cancelled);
     if (filter === "cancelled") list = list.filter((g) => g.cancelled);
     if (agentFilter === "Free Agent") list = list.filter((g) => !g.agent);
@@ -1747,7 +1785,7 @@ export default function NoirBookingManifest() {
       list = list.filter((g) => (g.roomType || "Unspecified") === roomTypeFilter);
     }
     return list;
-  }, [roster, filter, agentFilter, roomTypeFilter, activeContract]);
+  }, [roster, filter, agentFilter, roomTypeFilter]);
 
   const groupedRooms = useMemo(() => {
     const map = new Map();
@@ -1816,6 +1854,11 @@ export default function NoirBookingManifest() {
       "7 Mile": g.sevenMile ? "Yes" : "",
       "Club Mobay": g.clubMobay ? "Yes" : "",
       Cancelled: g.cancelled ? "Yes" : "",
+      "Cancellation date": g.cancelDate,
+      "Cancellation: amount paid": g.cancelAmountPaid,
+      "Cancellation: deposit": g.cancelDepositAmount,
+      "Cancellation: fee (to markup pool)": g.cancelFeeAmount,
+      "Cancellation: voucher amount": g.cancelVoucherAmount,
     }));
     const worksheet = XLSX.utils.json_to_sheet(rows);
     const workbook = XLSX.utils.book_new();
@@ -1844,6 +1887,19 @@ export default function NoirBookingManifest() {
       next = roster.map((g) => (g.id === editingId ? guestDraft : g));
     } else {
       next = [...roster, guestDraft];
+    }
+    if (guestDraft.cancelled) {
+      const groupKey = (guestDraft.roomGroup || "").trim().toLowerCase();
+      const roomIds = groupKey
+        ? next.filter((g) => (g.roomGroup || "").trim().toLowerCase() === groupKey).map((g) => g.id)
+        : [guestDraft.id];
+      const guestsInRoom = next.filter((g) => roomIds.includes(g.id));
+      const { cancellationFee, voucherPerPerson } = computeCancellationFee(guestsInRoom);
+      next = next.map((g) =>
+        roomIds.includes(g.id)
+          ? { ...g, cancelFeeAmount: cancellationFee ?? "", cancelVoucherAmount: voucherPerPerson }
+          : g
+      );
     }
     await saveRoster(next);
     setShowGuestForm(false);
@@ -2403,27 +2459,13 @@ export default function NoirBookingManifest() {
               </button>
               {t.id === activeTripId && (
                 <div className="noir-subnav">
-                  <div className="noir-subnavgroup" style={{ order: tabConfig.order.indexOf("roster") }}>
-                    <div
-                      className={"noir-subnavitem noir-subnavparent" + (activePage === "roster" ? " active" : "")}
-                    >
-                      {tabConfig.labels.roster}
-                    </div>
-                    <div className="noir-subnavchildren">
-                      <button
-                        className={"noir-subnavitem noir-subnavchild" + (activePage === "roster" && activeContract === "1" ? " active" : "")}
-                        onClick={() => { setActivePage("roster"); setActiveContract("1"); }}
-                      >
-                        Contract 1
-                      </button>
-                      <button
-                        className={"noir-subnavitem noir-subnavchild" + (activePage === "roster" && activeContract === "2" ? " active" : "")}
-                        onClick={() => { setActivePage("roster"); setActiveContract("2"); }}
-                      >
-                        Contract 2
-                      </button>
-                    </div>
-                  </div>
+                  <button
+                    style={{ order: tabConfig.order.indexOf("roster") }}
+                    className={"noir-subnavitem" + (activePage === "roster" ? " active" : "")}
+                    onClick={() => setActivePage("roster")}
+                  >
+                    {tabConfig.labels.roster}
+                  </button>
                   <button
                     style={{ order: tabConfig.order.indexOf("demographics") }}
                     className={"noir-subnavitem" + (activePage === "demographics" ? " active" : "")}
@@ -2438,27 +2480,13 @@ export default function NoirBookingManifest() {
                   >
                     {tabConfig.labels.flights}
                   </button>
-                  <div className="noir-subnavgroup" style={{ order: tabConfig.order.indexOf("inventory") }}>
-                    <div
-                      className={"noir-subnavitem noir-subnavparent" + (activePage === "inventory" ? " active" : "")}
-                    >
-                      {tabConfig.labels.inventory}
-                    </div>
-                    <div className="noir-subnavchildren">
-                      <button
-                        className={"noir-subnavitem noir-subnavchild" + (activePage === "inventory" && activeContract === "1" ? " active" : "")}
-                        onClick={() => { setActivePage("inventory"); setActiveContract("1"); }}
-                      >
-                        Contract 1
-                      </button>
-                      <button
-                        className={"noir-subnavitem noir-subnavchild" + (activePage === "inventory" && activeContract === "2" ? " active" : "")}
-                        onClick={() => { setActivePage("inventory"); setActiveContract("2"); }}
-                      >
-                        Contract 2
-                      </button>
-                    </div>
-                  </div>
+                  <button
+                    style={{ order: tabConfig.order.indexOf("inventory") }}
+                    className={"noir-subnavitem" + (activePage === "inventory" ? " active" : "")}
+                    onClick={() => setActivePage("inventory")}
+                  >
+                    {tabConfig.labels.inventory}
+                  </button>
                   <button
                     style={{ order: tabConfig.order.indexOf("commission") }}
                     className={"noir-subnavitem" + (activePage === "commission" ? " active" : "")}
@@ -3141,7 +3169,7 @@ export default function NoirBookingManifest() {
             })()}
 
             <div className="noir-header" style={{ marginBottom: 12 }}>
-              <div className="noir-blocklabel" style={{ marginBottom: 0 }}>Contract {activeContract} · by room type · click a row to see who's booked</div>
+              <div className="noir-blocklabel" style={{ marginBottom: 0 }}>By room type · click a row to see who's booked</div>
               <button
                 className="noir-btn ghost"
                 onClick={() => {
@@ -3257,10 +3285,10 @@ export default function NoirBookingManifest() {
 
             {inventoryOpenRoomType && (
               <div className="noir-agentblock">
-                <div className="noir-blocklabel">Who's booked · {inventoryOpenRoomType} · Contract {activeContract}</div>
+                <div className="noir-blocklabel">Who's booked · {inventoryOpenRoomType}</div>
                 {(() => {
                   const matches = (roster || []).filter(
-                    (g) => !g.cancelled && (g.contract || "1") === activeContract && g.roomType === inventoryOpenRoomType
+                    (g) => !g.cancelled && g.roomType === inventoryOpenRoomType
                   );
                   const roomMap = new Map();
                   const order = [];
@@ -3465,11 +3493,10 @@ export default function NoirBookingManifest() {
                       <>
                         <div className="noir-blocklabel" style={{ marginTop: 24 }}>Bonus commission potential</div>
                         <div className="noir-hint" style={{ marginBottom: 10 }}>
-                          For every {commissionData.bonus.roomsPerIncrement} priced Contract 1 rooms booked, the group earns an
+                          For every {commissionData.bonus.roomsPerIncrement} priced rooms booked, the group earns an
                           estimated {money(commissionData.bonus.amountPerIncrement)} bonus — split only between Carnisa, Asia, and
-                          LaQuanda based on each one's share of Contract 1's priced rooms. Whatever share belongs to Adrienne's and
+                          LaQuanda based on each one's share of all priced rooms. Whatever share belongs to Adrienne's and
                           Free Agent rooms rolls into the markup pool instead, the same way unattributed commission already does.
-                          Contract 2 rooms don't count here — they have their own separate bonus tracker below.
                         </div>
                         {bonusConfig && (
                           <div className="noir-grid3" style={{ maxWidth: 500, marginBottom: 14 }}>
@@ -3504,7 +3531,7 @@ export default function NoirBookingManifest() {
                         )}
                         <div className="noir-stats" style={{ gridTemplateColumns: "repeat(3, 1fr)", marginBottom: 12, maxWidth: 620 }}>
                           <div className="noir-statcard">
-                            <div className="noir-statlabel">Contract 1 priced rooms</div>
+                            <div className="noir-statlabel">Priced rooms</div>
                             <div className="noir-statval">{commissionData.bonus.totalPricedRooms}</div>
                           </div>
                           <div className="noir-statcard">
@@ -3527,68 +3554,6 @@ export default function NoirBookingManifest() {
                         <div className="noir-hint">
                           {money(commissionData.bonus.toMarkupPool)} of the bonus pool rolls into the markup pool (Adrienne's
                           and Free Agent rooms' share of the stake).
-                        </div>
-                      </>
-                    )}
-
-                    {commissionData.bonusContract2 && (
-                      <>
-                        <div className="noir-blocklabel" style={{ marginTop: 24 }}>Contract 2 bonus potential</div>
-                        <div className="noir-hint" style={{ marginBottom: 10 }}>
-                          Same formula, but counting only Contract 2's own priced rooms — separate from the trip-wide
-                          bonus above. This section is lead-only; Asia and LaQuanda never see it.
-                        </div>
-                        {bonusConfigC2 && (
-                          <div className="noir-grid3" style={{ maxWidth: 500, marginBottom: 14 }}>
-                            <div className="noir-field">
-                              <label>Rooms per increment</label>
-                              <input
-                                type="number"
-                                min="1"
-                                value={bonusConfigDraftC2.roomsPerIncrement}
-                                onChange={(e) => setBonusConfigDraftC2({ ...bonusConfigDraftC2, roomsPerIncrement: e.target.value })}
-                              />
-                            </div>
-                            <div className="noir-field">
-                              <label>Amount per increment</label>
-                              <input
-                                type="number"
-                                min="0"
-                                value={bonusConfigDraftC2.amountPerIncrement}
-                                onChange={(e) => setBonusConfigDraftC2({ ...bonusConfigDraftC2, amountPerIncrement: e.target.value })}
-                              />
-                            </div>
-                            <div style={{ display: "flex", alignItems: "flex-end" }}>
-                              <button type="button" className="noir-btn" onClick={() => saveBonusConfigC2(bonusConfigDraftC2)}>
-                                Save
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                        <div className="noir-stats" style={{ gridTemplateColumns: "repeat(3, 1fr)", marginBottom: 12, maxWidth: 620 }}>
-                          <div className="noir-statcard">
-                            <div className="noir-statlabel">Contract 2 priced rooms</div>
-                            <div className="noir-statval">{commissionData.bonusContract2.totalPricedRooms}</div>
-                          </div>
-                          <div className="noir-statcard">
-                            <div className="noir-statlabel">Bonus increments earned</div>
-                            <div className="noir-statval">{commissionData.bonusContract2.bonusIncrements}</div>
-                          </div>
-                          <div className="noir-statcard">
-                            <div className="noir-statlabel">Total bonus pool</div>
-                            <div className="noir-statval">{money(commissionData.bonusContract2.bonusPool)}</div>
-                          </div>
-                        </div>
-                        <div className="noir-agentcards" style={{ marginBottom: 12 }}>
-                          {["Carnisa", "Asia", "LaQuanda"].map((agent) => (
-                            <div key={agent} className="noir-agentcard" style={{ cursor: "default" }}>
-                              <div className="noir-statlabel">{agent}</div>
-                              <div className="noir-statval">{money(commissionData.bonusContract2.shares[agent] || 0)}</div>
-                            </div>
-                          ))}
-                        </div>
-                        <div className="noir-hint">
-                          {money(commissionData.bonusContract2.toMarkupPool)} of Contract 2's bonus pool rolls into the markup pool.
                         </div>
                       </>
                     )}
@@ -3717,9 +3682,9 @@ export default function NoirBookingManifest() {
                       <>
                         <div className="noir-blocklabel" style={{ marginTop: 24 }}>Bonus commission potential</div>
                         <div className="noir-hint" style={{ marginBottom: 10 }}>
-                          For every {commissionData.bonus.roomsPerIncrement} priced Contract 1 rooms booked, the group earns an
+                          For every {commissionData.bonus.roomsPerIncrement} priced rooms booked, the group earns an
                           estimated {money(commissionData.bonus.amountPerIncrement)} bonus, split between Carnisa, Asia, and
-                          LaQuanda based on Contract 1 room stake. This shows your share and the group total only.
+                          LaQuanda based on room stake. This shows your share and the group total only.
                         </div>
                         <div className="noir-stats" style={{ gridTemplateColumns: "repeat(2, 1fr)", maxWidth: 420 }}>
                           <div className="noir-statcard">
@@ -4617,6 +4582,12 @@ export default function NoirBookingManifest() {
                       <span className="noir-money">{money(contractStats.extraMarkupTotal)}</span>
                     </div>
                   )}
+                  {contractStats.cancellationFeeTotal > 0 && (
+                    <div className="noir-markupitem">
+                      <span>Cancellation fees</span>
+                      <span className="noir-money">{money(contractStats.cancellationFeeTotal)}</span>
+                    </div>
+                  )}
                 </div>
                 <div className="noir-hint">
                   Funjet only counts rooms that have a Price entered — right now that's {contractStats.revenueBreakdown.funjetMatchedRooms + contractStats.revenueBreakdown.funjetUnmatchedRooms} of {contractStats.rooms} rooms.
@@ -5267,7 +5238,18 @@ export default function NoirBookingManifest() {
                 <div className="noir-section">
                   <div className="noir-sectiontitle">Room</div>
                   <div className="noir-grid3">
-                    {field("Room type", guestDraft.roomType, (v) => setGuestDraft({ ...guestDraft, roomType: v }))}
+                    <div className="noir-field">
+                      <label>Room type</label>
+                      <select
+                        className="noir-select"
+                        style={{ width: "100%", borderRadius: 7 }}
+                        value={guestDraft.roomType}
+                        onChange={(e) => setGuestDraft({ ...guestDraft, roomType: e.target.value })}
+                      >
+                        <option value="">—</option>
+                        {ROOM_TYPE_ORDER.map((t) => <option key={t} value={t}>{t}</option>)}
+                      </select>
+                    </div>
                     {field("Bedding", guestDraft.bedding, (v) => setGuestDraft({ ...guestDraft, bedding: v }))}
                     <div className="noir-field">
                       <label>Agent</label>
@@ -5302,19 +5284,7 @@ export default function NoirBookingManifest() {
                     Give both roommates the same Room group name to link them. If you type one and their roommate
                     doesn't exist yet, use "Save & add roommate" below to create their profile pre-filled with the same room group.
                   </div>
-                  <div className="noir-grid3" style={{ marginTop: 10 }}>
-                    <div className="noir-field">
-                      <label>Contract</label>
-                      <select
-                        className="noir-select"
-                        style={{ width: "100%", borderRadius: 7 }}
-                        value={guestDraft.contract || "1"}
-                        onChange={(e) => setGuestDraft({ ...guestDraft, contract: e.target.value })}
-                      >
-                        <option value="1">Contract 1</option>
-                        <option value="2">Contract 2</option>
-                      </select>
-                    </div>
+                  <div style={{ maxWidth: 200, marginTop: 10 }}>
                     <div className="noir-field">
                       <label>Nights</label>
                       <select
@@ -5332,7 +5302,7 @@ export default function NoirBookingManifest() {
                   </div>
 
                   {(() => {
-                    const rateTable = ROOM_RATES_BY_CONTRACT[guestDraft.contract || "1"][guestDraft.roomType];
+                    const rateTable = ROOM_RATES_BY_CONTRACT["1"][guestDraft.roomType];
                     if (!rateTable) return null;
                     const groupKey = (guestDraft.roomGroup || "").trim().toLowerCase();
                     let occupancyCount = 1;
@@ -5522,6 +5492,111 @@ export default function NoirBookingManifest() {
                   );
                 })()}
 
+                {guestDraft.cancelled && (() => {
+                  const groupKey = (guestDraft.roomGroup || "").trim().toLowerCase();
+                  const roommates = groupKey && roster
+                    ? roster.filter((g) => g.id !== guestDraft.id && (g.roomGroup || "").trim().toLowerCase() === groupKey)
+                    : [];
+                  const guestsInRoom = [guestDraft, ...roommates];
+                  const passengerCount = guestsInRoom.length;
+                  if (roommates.length > 0 && !guestDraft.primaryTraveler) {
+                    return (
+                      <div className="noir-section">
+                        <div className="noir-sectiontitle">Cancellation details</div>
+                        <div className="noir-hint">
+                          Amount paid, deposit, and cancellation date are entered once on this room's Primary
+                          traveler — check "Primary traveler for this room" above on whichever guest holds them.
+                          The resulting voucher (if any) splits evenly across all {passengerCount} passengers in
+                          this room.
+                        </div>
+                      </div>
+                    );
+                  }
+                  const { cancellationFee, voucherPerPerson } = computeCancellationFee(guestsInRoom);
+                  const amountPaid = Number(guestDraft.cancelAmountPaid) || 0;
+                  const deposit = Number(guestDraft.cancelDepositAmount) || 0;
+                  const insuredCount = guestsInRoom.filter((g) => g.insurance).length;
+                  let note = "";
+                  if (insuredCount > 0) {
+                    note = `${insuredCount} of ${passengerCount} passenger(s) insured — voucher pool is amount paid minus $${INSURANCE_COST} per insured passenger, split evenly across all ${passengerCount} passengers regardless of who paid what. No cancellation fee to the markup pool.`;
+                  } else if (!guestDraft.cancelDate || !guestDraft.arrivalDate) {
+                    note = "Enter both an Arrival date and a Cancellation date to calculate the fee.";
+                  } else {
+                    const travel = new Date(guestDraft.arrivalDate);
+                    const cancelled = new Date(guestDraft.cancelDate);
+                    const daysOut = Math.round((travel - cancelled) / (1000 * 60 * 60 * 24));
+                    if (daysOut < 100) {
+                      note = `${daysOut} day(s) before travel — inside the 100-day window, so the full amount paid is non-refundable.`;
+                    } else {
+                      const aboveDeposit = Math.max(0, amountPaid - deposit);
+                      note = `${daysOut} day(s) before travel — outside the 100-day window: deposit is non-refundable, plus 50% of the ${money(aboveDeposit)} paid above the deposit.`;
+                    }
+                  }
+                  return (
+                    <div className="noir-section">
+                      <div className="noir-sectiontitle">Cancellation details {passengerCount > 1 && `(covers all ${passengerCount} passengers in this room)`}</div>
+                      <div className="noir-grid4">
+                        <div className="noir-field">
+                          <label>Amount paid so far (whole room)</label>
+                          <input
+                            type="number"
+                            value={guestDraft.cancelAmountPaid}
+                            onChange={(e) => setGuestDraft({ ...guestDraft, cancelAmountPaid: e.target.value })}
+                          />
+                        </div>
+                        <div className="noir-field">
+                          <label>Amount sent to supplier</label>
+                          <input
+                            type="number"
+                            value={guestDraft.cancelAmountToSupplier}
+                            onChange={(e) => setGuestDraft({ ...guestDraft, cancelAmountToSupplier: e.target.value })}
+                          />
+                        </div>
+                        <div className="noir-field">
+                          <label>Non-refundable from supplier</label>
+                          <input
+                            type="number"
+                            value={guestDraft.cancelNonRefundable}
+                            onChange={(e) => setGuestDraft({ ...guestDraft, cancelNonRefundable: e.target.value })}
+                          />
+                        </div>
+                        <div className="noir-field">
+                          <label>Initial deposit</label>
+                          <input
+                            type="number"
+                            value={guestDraft.cancelDepositAmount}
+                            onChange={(e) => setGuestDraft({ ...guestDraft, cancelDepositAmount: e.target.value })}
+                          />
+                        </div>
+                      </div>
+                      <div className="noir-hint" style={{ marginTop: 6 }}>
+                        "Amount sent to supplier" and "Non-refundable from supplier" are for your own records — the
+                        Cancellation fee below (the number that rolls into the markup pool) is calculated from the
+                        guest-facing refund policy instead.
+                      </div>
+                      <div className="noir-grid3" style={{ marginTop: 10 }}>
+                        <div className="noir-field">
+                          <label>Cancellation date</label>
+                          <input
+                            type="date"
+                            value={guestDraft.cancelDate}
+                            onChange={(e) => setGuestDraft({ ...guestDraft, cancelDate: e.target.value })}
+                          />
+                        </div>
+                        <div className="noir-field">
+                          <label>Cancellation fee</label>
+                          <input type="text" readOnly style={{ opacity: 0.8 }} value={cancellationFee == null ? "—" : money(cancellationFee)} />
+                        </div>
+                        <div className="noir-field">
+                          <label>Voucher per person</label>
+                          <input type="text" readOnly style={{ opacity: 0.8 }} value={money(voucherPerPerson)} />
+                        </div>
+                        <div className="noir-hint" style={{ gridColumn: "1 / -1", marginTop: 8 }}>{note}</div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 <div className="noir-modalactions">
                   {editingId && (
                     <>
@@ -5536,7 +5611,10 @@ export default function NoirBookingManifest() {
                       <button
                         type="button"
                         className="noir-btn ghost"
-                        onClick={() => setGuestDraft({ ...guestDraft, cancelled: !guestDraft.cancelled })}
+                        onClick={() => {
+                          if (!guestDraft.cancelled && !window.confirm(`Mark ${guestDraft.name || "this guest"} as cancelled?`)) return;
+                          setGuestDraft({ ...guestDraft, cancelled: !guestDraft.cancelled });
+                        }}
                       >
                         {guestDraft.cancelled ? "Restore guest" : "Mark cancelled"}
                       </button>
