@@ -18,17 +18,10 @@ async function storageSet(key, value) {
   if (!res.ok) throw new Error("Storage write failed");
 }
 
-async function logActivity(token, messages) {
-  if (!token || !messages || messages.length === 0) return;
-  try {
-    await fetch("/.netlify/functions/activitylog", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ messages }),
-    });
-  } catch {
-    // Best-effort logging — never block the actual save over this.
-  }
+async function logActivity() {
+  // Activity log feature removed — this is now a no-op so the many call sites
+  // throughout the app don't need to be touched individually.
+  return;
 }
 
 function fmtLogVal(v) {
@@ -118,15 +111,17 @@ const AGENTS = ["Carnisa", "Asia", "LaQuanda", "Adrienne"];
 
 // Per-person selling rates, rounded to nearest $5, already includes the $250/person markup over contract cost.
 // Kept here for reference in case the markup or contract terms change later.
+// These stay bundled inside the markup pool "remainder" - not their own bar segment.
 const MARKUP_LINE_ITEMS = [
-  { label: "Airport transfers", amount: 60 },
-  { label: "Marketing budget", amount: 10 },
-  { label: "Gift bags", amount: 50 },
-  { label: "Emergency buffer", amount: 50 },
-  { label: "Referral fee", amount: 50 },
+  { label: "Markup fees", amount: 50 },
   { label: "NOIR Night food", amount: 30 },
 ];
 const PER_PERSON_MARKUP = MARKUP_LINE_ITEMS.reduce((s, i) => s + i.amount, 0);
+// These get their own segment on "Where the revenue goes" - real payouts, not part of
+// the markup pool's profit remainder.
+const AIRPORT_TRANSFER_PER_PERSON = 60;
+const GIFT_BAG_PER_PERSON = 60;
+const REFERRAL_FEE_PER_PERSON = 50; // both what's collected per guest and what's paid out per referral
 const INSURANCE_COST = 139.99;
 const ROOM_RATES_BY_CONTRACT = {
   "1": {
@@ -299,7 +294,7 @@ const emptyItineraryEvent = () => ({
 
 const PAST_NOIR_TRIPS = ["Cabo 2023", "Punta Cana 2024", "Antigua 2025", "St. Lucia 2026"];
 
-const DEFAULT_TAB_ORDER = ["roster", "demographics", "flights", "inventory", "commission", "rates", "activitylog", "vendors", "itinerary", "sponsorship", "superlative"];
+const DEFAULT_TAB_ORDER = ["roster", "demographics", "flights", "inventory", "commission", "rates", "vendors", "itinerary", "sponsorship", "superlative"];
 const DEFAULT_TAB_LABELS = {
   roster: "Roster",
   demographics: "Demographics",
@@ -307,7 +302,6 @@ const DEFAULT_TAB_LABELS = {
   inventory: "Inventory",
   commission: "Commission",
   rates: "Rates & Verification",
-  activitylog: "Activity Log",
   vendors: "Vendors",
   itinerary: "Itinerary",
   sponsorship: "Sponsorship",
@@ -472,7 +466,6 @@ export default function NoirBookingManifest() {
   const [concessionsDraft, setConcessionsDraft] = useState({ count: "", value: "" });
   const [bonusConfig, setBonusConfig] = useState(null);
   const [bonusConfigDraft, setBonusConfigDraft] = useState({ roomsPerIncrement: "", amountPerIncrement: "" });
-  const [activityLogEntries, setActivityLogEntries] = useState(null);
   const [flightsOpenDate, setFlightsOpenDate] = useState(null);
   const [flightsOpenFlight, setFlightsOpenFlight] = useState(null);
   const [showFlightForm, setShowFlightForm] = useState(false);
@@ -538,25 +531,6 @@ export default function NoirBookingManifest() {
       }
     })();
   }, [commissionAuth, activeTripId, roster, bonusConfig]);
-
-  useEffect(() => {
-    if (!commissionAuth || !commissionAuth.lead || !activeTripId || activePage !== "activitylog") return;
-    (async () => {
-      try {
-        const res = await fetch(`/.netlify/functions/activitylog?tripId=${encodeURIComponent(activeTripId)}`, {
-          headers: { Authorization: `Bearer ${commissionAuth.token}` },
-        });
-        if (!res.ok) {
-          setActivityLogEntries([]);
-          return;
-        }
-        const data = await res.json();
-        setActivityLogEntries(data.entries || []);
-      } catch {
-        setActivityLogEntries([]);
-      }
-    })();
-  }, [commissionAuth, activeTripId, activePage]);
 
   useEffect(() => {
     (async () => {
@@ -1630,6 +1604,11 @@ export default function NoirBookingManifest() {
       guestsWithRate += guestsInRoom.length;
     });
     const markupPoolFromGuests = PER_PERSON_MARKUP * guestsWithRate;
+    const airportTransfersTotal = AIRPORT_TRANSFER_PER_PERSON * guestsWithRate;
+    const giftBagBudgetTotal = GIFT_BAG_PER_PERSON * guestsWithRate;
+    const referralFeesCollected = REFERRAL_FEE_PER_PERSON * guestsWithRate;
+    const referralFeesPaidOut = REFERRAL_FEE_PER_PERSON * referralCount;
+    const referralFeeDifference = Math.max(0, referralFeesCollected - referralFeesPaidOut);
     let extraMarkupTotal = 0;
     roomMap.forEach((guestsInRoom) => {
       const roomPrice = guestsInRoom.reduce((s, g) => s + (Number(g.price) || 0), 0);
@@ -1653,7 +1632,7 @@ export default function NoirBookingManifest() {
       cancellationFeeTotal += computeCancellationFee(guestsInRoom).cancellationFee || 0;
     });
     cancellationFeeTotal = Math.round(cancellationFeeTotal * 100) / 100;
-    const totalMarkupPool = markupPoolFromGuests + markupPoolFromFreeAgents + extraMarkupTotal + cancellationFeeTotal;
+    const totalMarkupPool = markupPoolFromGuests + markupPoolFromFreeAgents + extraMarkupTotal + cancellationFeeTotal + referralFeeDifference;
     return {
       count: active.length,
       guestsWithRate,
@@ -1705,6 +1684,10 @@ export default function NoirBookingManifest() {
       markupPoolFromFreeAgents,
       extraMarkupTotal,
       cancellationFeeTotal,
+      airportTransfersTotal,
+      giftBagBudgetTotal,
+      referralFeesPaidOut,
+      referralFeeDifference,
       totalMarkupPool,
       revenueBreakdown: {
         vendorCost: roomRevenue - totalCommission,
@@ -1718,6 +1701,10 @@ export default function NoirBookingManifest() {
         markupPoolFromFreeAgents,
         extraMarkupTotal,
         cancellationFeeTotal,
+        airportTransfersTotal,
+        giftBagBudgetTotal,
+        referralFeesPaidOut,
+        referralFeeDifference,
         totalMarkupPool,
         unconfirmedTotal,
         insuranceRevenue,
@@ -2109,6 +2096,9 @@ export default function NoirBookingManifest() {
         .seg-vendor { background: #4a4a4a; }
         .seg-agent { background: #111111; }
         .seg-tjkc { background: #8a8a8a; }
+        .seg-transfers { background: #5c7a5e; }
+        .seg-giftbags { background: #a05c5c; }
+        .seg-referral { background: #7a5c9e; }
         .seg-markup { background: #b8843a; }
         .seg-unconfirmed { background: #c9c2b0; }
         .seg-insurance { background: #6b8f96; }
@@ -2501,15 +2491,6 @@ export default function NoirBookingManifest() {
                       onClick={() => setActivePage("rates")}
                     >
                       {tabConfig.labels.rates}
-                    </button>
-                  )}
-                  {commissionAuth && commissionAuth.lead && (
-                    <button
-                      style={{ order: tabConfig.order.indexOf("activitylog") }}
-                      className={"noir-subnavitem" + (activePage === "activitylog" ? " active" : "")}
-                      onClick={() => setActivePage("activitylog")}
-                    >
-                      {tabConfig.labels.activitylog}
                     </button>
                   )}
                   <button
@@ -3861,43 +3842,6 @@ export default function NoirBookingManifest() {
           </div>
         )}
 
-        {activePage === "activitylog" && (
-          <div className="noir-demopage">
-            {!commissionAuth || !commissionAuth.lead ? (
-              <>
-                <div className="noir-blocklabel">This tab is lead-only</div>
-                <div className="noir-hint">
-                  The activity log is restricted to Carnisa. If you're seeing this, something's off — this tab
-                  shouldn't be reachable from your sidebar at all.
-                </div>
-              </>
-            ) : !activityLogEntries ? (
-              <div className="noir-empty">Loading activity log…</div>
-            ) : activityLogEntries.length === 0 ? (
-              <div className="noir-empty">No changes logged yet.</div>
-            ) : (
-              <>
-                <div className="noir-blocklabel">Who changed what, and when</div>
-                <div className="noir-referrerlist">
-                  {[...activityLogEntries].reverse().map((entry, i) => (
-                    <div key={i} className="noir-referrerrow">
-                      <div className="noir-referrerbtn" style={{ cursor: "default", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
-                        <div style={{ display: "flex", gap: 10, alignItems: "baseline", width: "100%" }}>
-                          <span style={{ fontWeight: 600 }}>{entry.who}</span>
-                          <span className="noir-referrercount" style={{ marginLeft: "auto" }}>
-                            {new Date(entry.when).toLocaleString()}
-                          </span>
-                        </div>
-                        <div style={{ fontSize: 13, color: "var(--muted-inverse)" }}>{entry.message}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-        )}
-
         {activePage === "vendors" && (
           <div className="noir-demopage">
             <div className="noir-header" style={{ marginBottom: 18 }}>
@@ -4519,6 +4463,21 @@ export default function NoirBookingManifest() {
                         title={"TJKC split: " + money(contractStats.revenueBreakdown.tjkcTotal)}
                       ></div>
                       <div
+                        className="noir-breakdownseg seg-transfers"
+                        style={{ flexGrow: Math.max(contractStats.revenueBreakdown.airportTransfersTotal, 0) }}
+                        title={"Airport transfers: " + money(contractStats.revenueBreakdown.airportTransfersTotal)}
+                      ></div>
+                      <div
+                        className="noir-breakdownseg seg-giftbags"
+                        style={{ flexGrow: Math.max(contractStats.revenueBreakdown.giftBagBudgetTotal, 0) }}
+                        title={"Gift bag budget: " + money(contractStats.revenueBreakdown.giftBagBudgetTotal)}
+                      ></div>
+                      <div
+                        className="noir-breakdownseg seg-referral"
+                        style={{ flexGrow: Math.max(contractStats.revenueBreakdown.referralFeesPaidOut, 0) }}
+                        title={"Referral fees paid out: " + money(contractStats.revenueBreakdown.referralFeesPaidOut)}
+                      ></div>
+                      <div
                         className="noir-breakdownseg seg-markup"
                         style={{ flexGrow: Math.max(contractStats.revenueBreakdown.totalMarkupPool, 0) }}
                         title={"Markup pool: " + money(contractStats.revenueBreakdown.totalMarkupPool)}
@@ -4550,6 +4509,18 @@ export default function NoirBookingManifest() {
                     TJKC split <strong>{money(contractStats.revenueBreakdown.tjkcTotal)}</strong>
                   </div>
                   <div className="noir-breakdownitem">
+                    <span className="noir-breakdowndot seg-transfers"></span>
+                    Airport transfers <strong>{money(contractStats.revenueBreakdown.airportTransfersTotal)}</strong>
+                  </div>
+                  <div className="noir-breakdownitem">
+                    <span className="noir-breakdowndot seg-giftbags"></span>
+                    Gift bag budget <strong>{money(contractStats.revenueBreakdown.giftBagBudgetTotal)}</strong>
+                  </div>
+                  <div className="noir-breakdownitem">
+                    <span className="noir-breakdowndot seg-referral"></span>
+                    Referral fees paid out <strong>{money(contractStats.revenueBreakdown.referralFeesPaidOut)}</strong>
+                  </div>
+                  <div className="noir-breakdownitem">
                     <span className="noir-breakdowndot seg-markup"></span>
                     Markup pool <strong>{money(contractStats.revenueBreakdown.totalMarkupPool)}</strong>
                   </div>
@@ -4576,6 +4547,12 @@ export default function NoirBookingManifest() {
                       <span className="noir-money">{money(contractStats.markupPoolFromFreeAgents)}</span>
                     </div>
                   )}
+                  {contractStats.referralFeeDifference > 0 && (
+                    <div className="noir-markupitem">
+                      <span>Referral fee difference (${REFERRAL_FEE_PER_PERSON}/person collected, ${REFERRAL_FEE_PER_PERSON}/referral paid out)</span>
+                      <span className="noir-money">{money(contractStats.referralFeeDifference)}</span>
+                    </div>
+                  )}
                   {contractStats.extraMarkupTotal > 0 && (
                     <div className="noir-markupitem">
                       <span>Additional markup above the standard ${PER_PERSON_MARKUP}/person</span>
@@ -4594,9 +4571,11 @@ export default function NoirBookingManifest() {
                   Of those priced rooms, {contractStats.revenueBreakdown.funjetMatchedRooms} match your actual 5-night net rates by room type and occupancy.
                   {contractStats.revenueBreakdown.funjetUnmatchedRooms > 0 &&
                     ` The other ${contractStats.revenueBreakdown.funjetUnmatchedRooms} priced room(s) — PLAT 2BDRM, triples, or 4-night stays — aren't covered by that table yet, so they fall back to the revenue-minus-commission estimate.`}
-                  {" "}The markup pool covers ${PER_PERSON_MARKUP} per person (itemized above) as a standard baseline, plus
-                  anything routed over from Free Agent rooms, plus any room whose actual computed markup goes beyond
-                  that baseline (common for manually-entered rooms, like individual Contract 2 bookings).
+                  {" "}Airport transfers, Gift bag budget, and Referral fees paid out now show as their own segments
+                  above, not folded into the markup pool. What's left in the markup pool is: ${PER_PERSON_MARKUP} per
+                  person (itemized above) as a standard baseline, the difference between referral fees collected and
+                  what actually gets paid out, anything routed over from Free Agent rooms, any room whose actual
+                  computed markup goes beyond that baseline (common for manually-entered rooms), and cancellation fees.
                 </div>
               </div>
             )}
@@ -5318,19 +5297,30 @@ export default function NoirBookingManifest() {
                       .map((nights) => ({ nights, price: rateTable[nights]?.[occLabel] }))
                       .filter((c) => c.price != null);
                     if (!chips.length) return null;
+                    const funjetOccKey = occLabel === "single" ? "solo" : occLabel === "double" ? "double" : null;
                     return (
                       <div className="noir-ratesuggest">
                         <span className="noir-ratesuggest-label">Suggested rate ({occLabel} occupancy):</span>
-                        {chips.map((c) => (
-                          <button
-                            type="button"
-                            key={c.nights}
-                            className="noir-ratechip"
-                            onClick={() => setGuestDraft({ ...guestDraft, price: String(c.price), nights: String(c.nights) })}
-                          >
-                            {c.nights}n: {money(c.price)}
-                          </button>
-                        ))}
+                        {chips.map((c) => {
+                          const funjet = funjetOccKey ? getFunjetRate(c.nights, funjetOccKey, guestDraft.roomType, guestDraft.contract) : null;
+                          return (
+                            <button
+                              type="button"
+                              key={c.nights}
+                              className="noir-ratechip"
+                              onClick={() =>
+                                setGuestDraft({
+                                  ...guestDraft,
+                                  price: String(c.price),
+                                  nights: String(c.nights),
+                                  ...(funjet ? { netBalance: String(funjet.net), commission: String(funjet.commission) } : {}),
+                                })
+                              }
+                            >
+                              {c.nights}n: {money(c.price)}{funjet ? ` · net ${money(funjet.net)} / comm ${money(funjet.commission)}` : ""}
+                            </button>
+                          );
+                        })}
                       </div>
                     );
                   })()}
